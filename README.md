@@ -5,22 +5,18 @@ A web app for analyzing video game data and doing advanced data analytics on it.
 
 *   **Frontend**: Streamlit (Python) - Interactive Data Dashboard
 *   **Backend**: FastAPI (Python) - Core Business Logic
-*   **Database**: Supabase (PostgreSQL)
+*   **Database**: Local PostgreSQL (Dockerized)
 *   **Worker**: Python Faker Service (Data Generator)
 
 ## Quick Start
 
-1.  **Setup Environment**
-    Create a `.env` file with your Supabase credentials:
-    ```ini
-    SUPABASE_DB_URL="postgresql://..."
-    ```
-
-2.  **Run with Docker Compose**
+1.  **Run with Docker Compose**
+    This will spin up the entire stack, including a local PostgreSQL database.
     ```bash
     docker-compose up --build
     ```
 
-3.  **Access the App**
+2.  **Access the App**
     *   **Dashboard**: [http://localhost:8501](http://localhost:8501)
     *   **API Docs**: [http://localhost:8000/docs](http://localhost:8000/docs)
+    *   **Database**: `localhost:5432` (User: `rafay`, Pass: `rafay`, DB: `game_analytics`)

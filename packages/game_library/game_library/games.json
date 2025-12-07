@@ -1,0 +1,26 @@
+[
+  {
+    "id": "valorant",
+    "name": "Valorant",
+    "cover_url": "https://upload.wikimedia.org/wikipedia/en/thumb/f/f6/Valorant_cover.jpg/220px-Valorant_cover.jpg",
+    "tags": ["FPS", "Tactical", "Competitive", "Hero Shooter"]
+  },
+  {
+    "id": "elden_ring",
+    "name": "Elden Ring",
+    "cover_url": "https://upload.wikimedia.org/wikipedia/en/thumb/b/b9/Elden_Ring_Box_art.jpg/220px-Elden_Ring_Box_art.jpg",
+    "tags": ["RPG", "Open World", "Souls-like", "Dark Fantasy"]
+  },
+  {
+    "id": "minecraft",
+    "name": "Minecraft",
+    "cover_url": "https://upload.wikimedia.org/wikipedia/en/thumb/5/51/Minecraft_cover.png/220px-Minecraft_cover.png",
+    "tags": ["Sandbox", "Survival", "Multiplayer", "Creative"]
+  },
+  {
+    "id": "stardew_valley",
+    "name": "Stardew Valley",
+    "cover_url": "https://upload.wikimedia.org/wikipedia/en/thumb/f/fd/Stardew_Valley.jpg/220px-Stardew_Valley.jpg",
+    "tags": ["Simulation", "Farming", "Indie", "RPG"]
+  }
+]

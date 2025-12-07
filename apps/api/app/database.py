@@ -2,8 +2,8 @@ import os
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker, declarative_base
 
-# Use the Transaction Mode URL (Port 6543) for serverless scalability
-DATABASE_URL = os.environ.get("SUPABASE_DB_URL")
+# Use DATABASE_URL from environment (set in docker-compose for local)
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
 # Ensure we use the async driver
 if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
@@ -14,8 +14,6 @@ elif DATABASE_URL and DATABASE_URL.startswith("postgresql://"):
 engine = create_async_engine(
     DATABASE_URL,
     echo=False,
-    # CRITICAL for Supabase Transaction Mode:
-    connect_args={"statement_cache_size": 0} 
 )
 
 AsyncSessionLocal = sessionmaker(
