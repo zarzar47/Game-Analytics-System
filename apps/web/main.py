@@ -73,7 +73,7 @@ class GameDataStore:
         self._thread.start()
 
     def _consume_loop(self):
-        print("✅ Kafka Consumer Thread Started")
+        print("Kafka Consumer Thread Started")
         try:
             consumer = KafkaConsumer(
                 TOPIC_NAME,
@@ -86,7 +86,7 @@ class GameDataStore:
             for message in consumer:
                 self.update(message.value)
         except Exception as e:
-            print(f"❌ Kafka Consumer Failed: {e}")
+            print(f"Kafka Consumer Failed: {e}")
             self._running = False
 
 @st.cache_resource
