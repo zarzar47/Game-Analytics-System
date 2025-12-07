@@ -74,20 +74,24 @@ class GameDataStore:
 
     def _consume_loop(self):
         print("Kafka Consumer Thread Started")
-        try:
-            consumer = KafkaConsumer(
-                TOPIC_NAME,
-                bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
-                value_deserializer=lambda x: json.loads(x.decode('utf-8')),
-                auto_offset_reset='latest',
-                enable_auto_commit=True,
-                group_id='streamlit-dashboard-global'
-            )
-            for message in consumer:
-                self.update(message.value)
-        except Exception as e:
-            print(f"Kafka Consumer Failed: {e}")
-            self._running = False
+        while self._running:
+            try:
+                consumer = KafkaConsumer(
+                    TOPIC_NAME,
+                    bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
+                    value_deserializer=lambda x: json.loads(x.decode('utf-8')),
+                    auto_offset_reset='latest',
+                    enable_auto_commit=True,
+                    group_id='streamlit-dashboard-global'
+                )
+                print("✅ Connected to Kafka")
+                for message in consumer:
+                    if not self._running: break
+                    self.update(message.value)
+            except Exception as e:
+                print(f"⚠️ Kafka Consumer Connection Failed: {e}")
+                print("🔄 Retrying in 5 seconds...")
+                time.sleep(5)
 
 @st.cache_resource
 def get_store():
