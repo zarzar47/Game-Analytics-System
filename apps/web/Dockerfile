@@ -2,10 +2,16 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-COPY requirements.txt .
+# Copy and install Shared Library
+COPY packages/game_library /tmp/game_library
+RUN pip install /tmp/game_library
+
+# Install App Dependencies
+COPY apps/web/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+# Copy App Code
+COPY apps/web/ .
 
 EXPOSE 8501
 

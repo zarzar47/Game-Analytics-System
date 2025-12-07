@@ -16,28 +16,37 @@ services:
 
   # 2. The Core Backend
   api:
-    build: ./apps/api
+    build: 
+      context: .
+      dockerfile: apps/api/Dockerfile
     ports:
       - "8000:8000"
     environment:
-      # Using local DB connection string
       - DATABASE_URL=postgresql+asyncpg://rafay:rafay@db:5432/game_analytics
     depends_on:
       - db
     volumes:
-      - ./apps/api:/app # Hot reloading for Python
+      - ./apps/api:/app # Hot reloading for Python code
+      - ./packages/game_library:/packages/game_library # Mount library for easier dev
 
   # 3. The Faker Service (Internal Worker)
   faker:
-    build: ./apps/faker
+    build: 
+      context: .
+      dockerfile: apps/faker/Dockerfile
     environment:
       - API_URL=http://api:8000/internal/ingest
     depends_on:
       - api
+    volumes:
+      - ./apps/faker:/app
+      - ./packages/game_library:/packages/game_library
 
   # 4. The Frontend Dashboard (Streamlit)
   web:
-    build: ./apps/web
+    build: 
+      context: .
+      dockerfile: apps/web/Dockerfile
     ports:
       - "8501:8501"
     environment:
@@ -46,6 +55,7 @@ services:
       - api
     volumes:
       - ./apps/web:/app # Hot reloading for Streamlit
+      - ./packages/game_library:/packages/game_library
 
 volumes:
   postgres_data:
