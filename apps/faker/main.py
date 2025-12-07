@@ -16,10 +16,10 @@ def get_producer():
                 bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
                 value_serializer=lambda v: json.dumps(v).encode('utf-8')
             )
-            print("✅ Connected to Kafka")
+            print("Connected to Kafka")
             return producer
         except Exception as e:
-            print(f"⏳ Waiting for Kafka: {e}")
+            print(f"Waiting for Kafka: {e}")
             time.sleep(5)
 
 def generate_fake_data():
@@ -71,5 +71,5 @@ def generate_fake_data():
         time.sleep(1) # Interval
 
 if __name__ == "__main__":
-    print("🚀 Faker Service Started (Kafka Mode)...")
+    print("Faker Service Started (Kafka Mode)...")
     generate_fake_data()

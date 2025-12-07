@@ -36,7 +36,7 @@ class GameInfo(BaseModel):
 # --- BACKGROUND TASK ---
 async def consume_kafka():
     """Background task to consume Kafka messages and save to DB."""
-    print("⏳ Starting Kafka Consumer Background Task...")
+    print("Starting Kafka Consumer Background Task...")
     consumer = AIOKafkaConsumer(
         TOPIC_NAME,
         bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
@@ -46,16 +46,16 @@ async def consume_kafka():
     
     try:
         await consumer.start()
-        print("✅ API Consumer Connected to Kafka")
+        print("API Consumer Connected to Kafka")
         async for msg in consumer:
             payload = msg.value
             # HERE: Save to Database logic
             # For now, we just log that we would have saved it
             # async with AsyncSessionLocal() as session:
             #     ... save to db ...
-            print(f"💾 DB STORE: {payload.get('event_type')} for {payload.get('game_id')}")
+            print(f"DB STORE: {payload.get('event_type')} for {payload.get('game_id')}")
     except Exception as e:
-        print(f"❌ Kafka Consumer Error: {e}")
+        print(f"Kafka Consumer Error: {e}")
     finally:
         await consumer.stop()
 
@@ -78,5 +78,5 @@ async def ingest_metrics(payload: GameEvent, db: AsyncSession = Depends(get_db))
     """
     Legacy HTTP endpoint.
     """
-    print(f"🔥 HTTP INGEST: {payload.game_id}")
+    print(f"HTTP INGEST: {payload.game_id}")
     return {"msg": "Data received"}
