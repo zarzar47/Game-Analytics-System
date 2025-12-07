@@ -154,27 +154,20 @@ if st.session_state.view_mode == 'global':
     
     games = get_games()
     
-    # Use 4 columns instead of 3 to make cards smaller
     cols = st.columns(4)
     
     for idx, game in enumerate(games):
         with cols[idx % 4]:
             with st.container(border=True):
-                # Header
                 st.subheader(game["name"])
-                
-                # Image
                 st.image(game["cover_url"], use_container_width=True)
                 
-                # Metrics
                 m = metrics_snapshot.get(game['id'], {})
                 
-                # Compact Metrics
                 c1, c2 = st.columns(2)
                 c1.metric("Users", f"{m.get('player_count', 0):,}")
                 c2.metric("Mood", f"{m.get('sentiment_score', 0.0):.2f}")
                 
-                # Action Button
                 if st.button(f"Analytics", key=f"btn_{game['id']}", use_container_width=True):
                     st.session_state.selected_game_id = game['id']
                     st.session_state.view_mode = 'detail'
@@ -190,7 +183,7 @@ elif st.session_state.view_mode == 'detail':
     game = get_game_by_id(game_id)
     m = metrics_snapshot.get(game_id, {})
     
-    if st.button("← Back to Global View"):
+    if st.button("Back to Global View"):
         st.session_state.view_mode = 'global'
         st.session_state.selected_game_id = None
         st.rerun()
@@ -203,27 +196,37 @@ elif st.session_state.view_mode == 'detail':
         st.write(f"**Tags:** {', '.join(game['tags'])}")
         
     with col2:
-        # Real-time Metrics Big Display
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Active Players", f"{m.get('player_count', 0):,}")
         m2.metric("Sentiment Score", f"{m.get('sentiment_score', 0.0):.2f}")
         m3.metric("Total Purchases", f"{m.get('total_purchases', 0)}")
         m4.metric("Revenue", f"${m.get('purchase_amount', 0.0):.2f}")
         
-        st.markdown("### Real-Time Charts")
-        # In a real implementation, we would keep a history list in the store for charting.
-        # For now, we mock a chart based on current snapshot to show layout.
+        st.markdown("### Historical Trends (Last 24h)")
         
-        # Mocking a history for visualization purposes since we only store snapshot
-        chart_data = pd.DataFrame({
-            "Time": pd.date_range(start="now", periods=10, freq="min"),
-            "Players": [m.get('player_count', 0) * (1 + i*0.01) for i in range(10)]
-        })
-        st.line_chart(chart_data, x="Time", y="Players")
-        
-        st.info("Charts will populate with historical data in the next update.")
+        # Fetch Real Historical Data from API
+        try:
+            hist_response = requests.get(f"{API_URL}/games/{game_id}/history?hours=24")
+            if hist_response.status_code == 200:
+                hist_data = hist_response.json()
+                if hist_data:
+                    df = pd.DataFrame(hist_data)
+                    df['timestamp'] = pd.to_datetime(df['timestamp'])
+                    
+                    tab1, tab2 = st.tabs(["Player Count", "Sentiment"])
+                    
+                    with tab1:
+                        st.line_chart(df, x="timestamp", y="player_count")
+                    
+                    with tab2:
+                        st.line_chart(df, x="timestamp", y="sentiment_score")
+                else:
+                    st.info("No historical data available yet.")
+            else:
+                st.error(f"Failed to fetch history: {hist_response.status_code}")
+        except Exception as e:
+            st.error(f"API Error: {e}")
 
     st.markdown("### Recent Events for this Game")
-    # Filter logs for this game
     game_logs = [l for l in logs_snapshot if game['name'] in l]
     st.text_area("Game Events", value="\n".join(game_logs) if game_logs else "No recent events.", height=200)

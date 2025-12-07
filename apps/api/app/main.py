@@ -1,13 +1,17 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Query
 from pydantic import BaseModel
 from typing import Optional, List
-from .database import get_db, AsyncSessionLocal
+from .database import get_db, AsyncSessionLocal, engine, Base
+from .models import GameMetric
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from sqlalchemy.sql import func
 from game_library import get_games
 from aiokafka import AIOKafkaConsumer
 import asyncio
 import json
 import os
+import datetime
 
 app = FastAPI(title="Game Analytics Core")
 
@@ -19,6 +23,7 @@ TOPIC_NAME = "GameAnalytics"
 class GameEvent(BaseModel):
     game_id: str
     event_type: str
+    game_name: Optional[str] = None
     player_count: Optional[int] = None
     sentiment_score: Optional[float] = None
     review_text: Optional[str] = None
@@ -32,6 +37,12 @@ class GameInfo(BaseModel):
     name: str
     cover_url: str
     tags: List[str]
+
+class HistoricalMetric(BaseModel):
+    timestamp: datetime.datetime
+    player_count: Optional[int]
+    sentiment_score: Optional[float]
+    purchase_amount: Optional[float]
 
 # --- BACKGROUND TASK ---
 async def consume_kafka():
@@ -49,11 +60,30 @@ async def consume_kafka():
         print("API Consumer Connected to Kafka")
         async for msg in consumer:
             payload = msg.value
-            # HERE: Save to Database logic
-            # For now, we just log that we would have saved it
-            # async with AsyncSessionLocal() as session:
-            #     ... save to db ...
-            print(f"DB STORE: {payload.get('event_type')} for {payload.get('game_id')}")
+            
+            async with AsyncSessionLocal() as session:
+                async with session.begin():
+                    # Parse timestamp
+                    ts = None
+                    if payload.get("timestamp"):
+                        ts = datetime.datetime.fromtimestamp(payload["timestamp"])
+
+                    new_metric = GameMetric(
+                        game_id=payload.get("game_id"),
+                        game_name=payload.get("game_name"),
+                        event_type=payload.get("event_type"),
+                        timestamp=ts,
+                        player_count=payload.get("player_count"),
+                        sentiment_score=payload.get("sentiment_score"),
+                        review_text=payload.get("review_text"),
+                        playtime_session=payload.get("playtime_session"),
+                        playtime_total=payload.get("playtime_total"),
+                        purchase_amount=payload.get("purchase_amount"),
+                    )
+                    session.add(new_metric)
+                # Commit happens automatically on exit of session.begin() block if no error
+            
+            # print(f"DB STORE: {payload.get('event_type')} for {payload.get('game_id')}")
     except Exception as e:
         print(f"Kafka Consumer Error: {e}")
     finally:
@@ -61,6 +91,10 @@ async def consume_kafka():
 
 @app.on_event("startup")
 async def startup_event():
+    # Create Tables
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+        
     # Run consumer in background
     asyncio.create_task(consume_kafka())
 
@@ -72,6 +106,40 @@ def health_check():
 @app.get("/games", response_model=List[GameInfo])
 def list_games():
     return get_games()
+
+@app.get("/games/{game_id}/history", response_model=List[HistoricalMetric])
+async def get_game_history(
+    game_id: str, 
+    hours: int = 24, 
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Fetch historical data for charts. 
+    Currently returns raw data points for player_count and sentiment.
+    """
+    cutoff = datetime.datetime.now() - datetime.timedelta(hours=hours)
+    
+    # We want status updates mainly for the charts
+    query = (
+        select(GameMetric)
+        .where(GameMetric.game_id == game_id)
+        .where(GameMetric.timestamp >= cutoff)
+        .where(GameMetric.event_type == "status")
+        .order_by(GameMetric.timestamp.asc())
+    )
+    
+    result = await db.execute(query)
+    records = result.scalars().all()
+    
+    return [
+        HistoricalMetric(
+            timestamp=r.timestamp,
+            player_count=r.player_count,
+            sentiment_score=r.sentiment_score,
+            purchase_amount=r.purchase_amount
+        )
+        for r in records
+    ]
 
 @app.post("/internal/ingest", status_code=201)
 async def ingest_metrics(payload: GameEvent, db: AsyncSession = Depends(get_db)):
