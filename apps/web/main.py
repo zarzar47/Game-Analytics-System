@@ -3,99 +3,104 @@ import pandas as pd
 import requests
 import os
 import time
+import json
 import plotly.express as px
+from kafka import KafkaConsumer
 from game_library import get_games, get_game_by_id
 
 # Configuration
 API_URL = os.getenv("API_URL", "http://api:8000")
-st.set_page_config(page_title="Game Analytics Dashboard", layout="wide")
+KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+TOPIC_NAME = "GameAnalytics"
 
-# --- STATE MANAGEMENT ---
-if "selected_game_id" not in st.session_state:
-    st.session_state.selected_game_id = None
+st.set_page_config(page_title="Game Analytics Real-Time", layout="wide")
+
+# --- KAFKA CONSUMER SETUP ---
+# We cache the consumer to avoid reconnecting on every script rerun (if that happens)
+# However, for a streaming loop, we won't strictly rerun the script often.
+
+@st.cache_resource
+def get_consumer():
+    try:
+        consumer = KafkaConsumer(
+            TOPIC_NAME,
+            bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
+            value_deserializer=lambda x: json.loads(x.decode('utf-8')),
+            auto_offset_reset='latest', # Start from new messages
+            enable_auto_commit=True,
+            group_id='streamlit-dashboard-group'
+        )
+        print("✅ Streamlit Connected to Kafka")
+        return consumer
+    except Exception as e:
+        print(f"❌ Kafka Connection Error: {e}")
+        return None
 
 # --- SIDEBAR ---
 st.sidebar.title("Navigation")
-if st.sidebar.button("🏠 Home / Global Stats"):
-    st.session_state.selected_game_id = None
+view_mode = st.sidebar.radio("View Mode", ["Live Stream", "Global Overview (Static)", "Game Details"])
 
-st.sidebar.header("Connection Status")
-try:
-    health = requests.get(f"{API_URL}/health", timeout=1).json()
-    st.sidebar.success(f"Core Backend: {health.get('status', 'Unknown')}")
-except Exception:
-    st.sidebar.error("Core Backend Offline")
-
-# --- MAIN CONTENT ---
-
-# 1. GLOBAL VIEW
-if st.session_state.selected_game_id is None:
-    st.title("🎮 Game Analytics: Global Overview")
+if view_mode == "Live Stream":
+    st.title("⚡ Real-Time Data Stream")
+    st.markdown("Listening to `GameAnalytics` Kafka topic...")
     
-    st.markdown("### Monitor all your games in one place")
+    # Placeholders for metrics
+    col1, col2, col3 = st.columns(3)
+    p1 = col1.empty()
+    p2 = col2.empty()
+    p3 = col3.empty()
     
-    games = get_games()
-    
-    # Display Grid of Games
-    cols = st.columns(3)
-    for idx, game in enumerate(games):
-        with cols[idx % 3]:
-            # Card-like container
-            with st.container(border=True):
-                st.image(game["cover_url"], use_container_width=True)
-                st.subheader(game["name"])
-                st.write(f"**Tags:** {', '.join(game['tags'])}")
-                if st.button(f"View Analytics ->", key=f"btn_{game['id']}"):
-                    st.session_state.selected_game_id = game["id"]
-                    st.rerun()
-
     st.divider()
-    st.subheader("Aggregate Performance (Mock)")
-    # Mock Global Chart
-    mock_data = pd.DataFrame([
-        {"game": g["name"], "players": len(g["name"])*1200} for g in games
-    ])
-    fig = px.bar(mock_data, x="game", y="players", title="Real-Time Active Players per Game")
-    st.plotly_chart(fig, use_container_width=True)
-
-# 2. SPECIFIC GAME DETAIL VIEW
-else:
-    game_id = st.session_state.selected_game_id
-    game = get_game_by_id(game_id)
     
-    if not game:
-        st.error("Game not found!")
-        st.stop()
-        
-    st.button("<- Back to Home", on_click=lambda: st.session_state.update(selected_game_id=None))
+    # Placeholder for the log
+    log_container = st.container()
     
-    col1, col2 = st.columns([1, 3])
-    with col1:
-        st.image(game["cover_url"], use_container_width=True)
-    with col2:
-        st.title(game["name"])
-        st.write(f"**Tags:** {', '.join(game['tags'])}")
-        st.info("Live Incoming Telemetry...")
-
-    # Mock Data for this game
-    # In real app: fetch from API: requests.get(f"{API_URL}/metrics/{game_id}")
-    
-    st.markdown("### 📊 Key Metrics")
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Active Players", "12,450", "+5%")
-    m2.metric("Avg Sentiment", "0.85", "+0.02")
-    m3.metric("Total Revenue (1h)", "$4,200", "120 tx")
-    m4.metric("Avg Playtime", "2.4h")
-
-    st.markdown("### 📝 Recent Reviews")
-    reviews = [
-        {"user": "PlayerOne", "text": "Amazing update!", "score": 0.9, "playtime": "450h"},
-        {"user": "NoobMaster", "text": "Too hard.", "score": 0.3, "playtime": "2h"},
-        {"user": "Critic99", "text": "Balanced gameplay.", "score": 0.8, "playtime": "120h"},
-    ]
-    for r in reviews:
-        with st.expander(f"{r['user']} (Playtime: {r['playtime']}) - Sentiment: {r['score']}"):
-            st.write(r['text'])
+    if st.button("Start Streaming"):
+        consumer = get_consumer()
+        if not consumer:
+            st.error("Could not connect to Kafka broker.")
+            st.stop()
             
-    st.markdown("### 💰 Purchase Activity")
-    st.line_chart([10, 20, 15, 30, 45, 20, 60])
+        st.success("Streaming started... (Stop via Stop button usually, but here just refresh)")
+        
+        # Buffer for log
+        log_data = []
+        
+        for message in consumer:
+            data = message.value
+            event_type = data.get("event_type")
+            game_name = data.get("game_name")
+            
+            # Update metrics based on type
+            if event_type == "status":
+                p1.metric(f"Players: {game_name}", data.get("player_count"))
+                p2.metric(f"Sentiment: {game_name}", data.get("sentiment_score"))
+            
+            elif event_type == "purchase":
+                p3.metric(f"New Purchase: {game_name}", f"${data.get('purchase_amount')}")
+
+            # Update Log
+            log_entry = f"[{time.strftime('%H:%M:%S')}] {event_type.upper()} - {game_name}: {json.dumps(data)}"
+            log_data.insert(0, log_entry)
+            log_data = log_data[:10] # Keep last 10
+            
+            with log_container:
+                # We clear and redraw the log
+                log_container.empty()
+                for line in log_data:
+                    st.code(line, language="text")
+                    
+            # In a real app, you might want a break condition or non-blocking loop
+            # Streamlit loops block the UI, but updates are pushed.
+
+elif view_mode == "Global Overview (Static)":
+    st.title("🎮 Global Overview")
+    games = get_games()
+    for game in games:
+        st.write(f"**{game['name']}** - {', '.join(game['tags'])}")
+    st.info("Switch to 'Live Stream' to see incoming data.")
+
+elif view_mode == "Game Details":
+    st.title("Game Details")
+    st.write("Select a game from the sidebar (Not implemented in this demo mode)")
+

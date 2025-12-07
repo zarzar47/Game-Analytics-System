@@ -6,3 +6,4 @@ supabase
 pydantic
 pydantic-settings
 httpx
+aiokafka
