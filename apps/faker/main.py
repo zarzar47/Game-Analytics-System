@@ -1,13 +1,29 @@
 import time
 import random
-import requests
+import json
 import os
+from kafka import KafkaProducer
 from game_library import get_games
 
-# "api" is the docker-compose service name
-TARGET_URL = os.getenv("API_URL", "http://api:8000/internal/ingest")
+# Configuration
+KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+TOPIC_NAME = "GameAnalytics"
+
+def get_producer():
+    while True:
+        try:
+            producer = KafkaProducer(
+                bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
+                value_serializer=lambda v: json.dumps(v).encode('utf-8')
+            )
+            print("✅ Connected to Kafka")
+            return producer
+        except Exception as e:
+            print(f"⏳ Waiting for Kafka: {e}")
+            time.sleep(5)
 
 def generate_fake_data():
+    producer = get_producer()
     games = get_games()
     
     while True:
@@ -25,6 +41,7 @@ def generate_fake_data():
         payload = {
             "game_id": game_id,
             "event_type": event_type,
+            "game_name": game["name"], # Denormalize for easier UI
             "timestamp": time.time()
         }
         
@@ -45,14 +62,14 @@ def generate_fake_data():
             payload["purchase_amount"] = random.choice([9.99, 19.99, 59.99, 4.99])
 
         try:
-            resp = requests.post(TARGET_URL, json=payload)
-            print(f"✅ Sent [{event_type}]: {game['name']} | Status: {resp.status_code}")
+            # Produce to Kafka
+            producer.send(TOPIC_NAME, payload)
+            print(f"✅ Sent to Kafka [{event_type}]: {game['name']}")
         except Exception as e:
-            print(f"❌ Error connecting to API: {e}")
+            print(f"❌ Error sending to Kafka: {e}")
             
-        time.sleep(1) # Faster generation
+        time.sleep(1) # Interval
 
 if __name__ == "__main__":
-    print("🚀 Faker Service Started...")
-    time.sleep(5) # Give API time to boot
+    print("🚀 Faker Service Started (Kafka Mode)...")
     generate_fake_data()
