@@ -19,7 +19,14 @@ services:
     depends_on:
       - api
 
-  # 3. The Frontend (Optional in Docker, usually run natively via 'pnpm dev')
-  # web:
-  #   build: ./apps/web
-  #   ports: ["3000:3000"]
+  # 3. The Frontend Dashboard (Streamlit)
+  web:
+    build: ./apps/web
+    ports:
+      - "8501:8501"
+    environment:
+      - API_URL=http://api:8000
+    depends_on:
+      - api
+    volumes:
+      - ./apps/web:/app # Hot reloading for Streamlit
