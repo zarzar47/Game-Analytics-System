@@ -4,11 +4,11 @@ import requests
 import os
 import time
 import json
-import plotly.express as px
+import threading
+import copy
 from kafka import KafkaConsumer
 from game_library import get_games, get_game_by_id
 from streamlit_autorefresh import st_autorefresh
-import threading
 
 # Configuration
 API_URL = os.getenv("API_URL", "http://api:8000")
@@ -17,112 +17,213 @@ TOPIC_NAME = "GameAnalytics"
 
 st.set_page_config(page_title="Game Analytics Real-Time", layout="wide")
 
-# --- KAFKA CONSUMER AND AGGREGATION ---
-if 'game_metrics' not in st.session_state:
-    st.session_state.game_metrics = {
-        game['id']: {'player_count': 0, 'sentiment_score': 0.0, 'total_purchases': 0, 'purchase_amount': 0.0, 'event_count': 0}
-        for game in get_games()
-    }
-    st.session_state.event_log = []
+# --- GLOBAL DATA STORE (Thread-Safe) ---
+class GameDataStore:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.games = get_games()
+        # Initialize metrics for each game
+        self.metrics = {
+            game['id']: {
+                'player_count': 0, 
+                'sentiment_score': 0.0, 
+                'total_purchases': 0, 
+                'purchase_amount': 0.0, 
+                'event_count': 0
+            }
+            for game in self.games
+        }
+        self.logs = []
+        self._running = False
+        self._thread = None
 
-def consume_and_aggregate():
-    consumer = None
-    try:
-        consumer = KafkaConsumer(
-            TOPIC_NAME,
-            bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
-            value_deserializer=lambda x: json.loads(x.decode('utf-8')),
-            auto_offset_reset='latest',  # Start from new messages
-            enable_auto_commit=True,
-            group_id='streamlit-dashboard-aggregator'
-        )
-        print("Streamlit Background Consumer Connected to Kafka")
-        
-        for message in consumer:
-            data = message.value
+    def update(self, data):
+        with self.lock:
             game_id = data.get("game_id")
             event_type = data.get("event_type")
             
-            if game_id in st.session_state.game_metrics:
-                metrics = st.session_state.game_metrics[game_id]
-                metrics['event_count'] += 1 # General event counter for averaging
+            if game_id in self.metrics:
+                m = self.metrics[game_id]
+                m['event_count'] += 1
                 
                 if event_type == "status":
-                    metrics['player_count'] = data.get("player_count", metrics['player_count'])
-                    # Simple moving average for sentiment (consider more robust methods for real apps)
-                    current_sentiment = data.get("sentiment_score")
-                    if current_sentiment is not None:
-                        metrics['sentiment_score'] = (metrics['sentiment_score'] * (metrics['event_count'] - 1) + current_sentiment) / metrics['event_count']
+                    m['player_count'] = data.get("player_count", m['player_count'])
+                    curr_sent = data.get("sentiment_score")
+                    if curr_sent is not None:
+                        m['sentiment_score'] = (m['sentiment_score'] * (m['event_count'] - 1) + curr_sent) / m['event_count']
                 
                 elif event_type == "purchase":
-                    metrics['total_purchases'] += 1
-                    metrics['purchase_amount'] += data.get("purchase_amount", 0.0)
-                
-                # Add to event log
-                log_entry = f"[{time.strftime('%H:%M:%S')}] {event_type.upper()} - {data.get('game_name', game_id)}: {json.dumps(data)}"
-                st.session_state.event_log.insert(0, log_entry)
-                st.session_state.event_log = st.session_state.event_log[:20] # Keep last 20
-                
-    except Exception as e:
-        print(f"Background Kafka Consumer Error: {e}")
-    finally:
-        if consumer:
-            consumer.close()
+                    m['total_purchases'] += 1
+                    m['purchase_amount'] += data.get("purchase_amount", 0.0)
+            
+            # Update Logs
+            log_entry = f"[{time.strftime('%H:%M:%S')}] {event_type.upper()} - {data.get('game_name', game_id)}"
+            self.logs.insert(0, log_entry)
+            self.logs = self.logs[:20]
 
-# Start consumer thread once
-if 'consumer_thread_started' not in st.session_state:
-    st.session_state.consumer_thread_started = True
-    consumer_thread = threading.Thread(target=consume_and_aggregate, daemon=True)
-    consumer_thread.start()
-    print("Kafka consumer thread started.")
+    def get_snapshot(self):
+        with self.lock:
+            return copy.deepcopy(self.metrics), list(self.logs)
+
+    def start_consumer(self):
+        if self._running:
+            return
+        self._running = True
+        self._thread = threading.Thread(target=self._consume_loop, daemon=True)
+        self._thread.start()
+
+    def _consume_loop(self):
+        print("✅ Kafka Consumer Thread Started")
+        try:
+            consumer = KafkaConsumer(
+                TOPIC_NAME,
+                bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
+                value_deserializer=lambda x: json.loads(x.decode('utf-8')),
+                auto_offset_reset='latest',
+                enable_auto_commit=True,
+                group_id='streamlit-dashboard-global'
+            )
+            for message in consumer:
+                self.update(message.value)
+        except Exception as e:
+            print(f"❌ Kafka Consumer Failed: {e}")
+            self._running = False
+
+@st.cache_resource
+def get_store():
+    store = GameDataStore()
+    store.start_consumer()
+    return store
+
+store = get_store()
 
 # --- AUTO-REFRESH UI ---
-st_autorefresh(interval=3000, key="data_refresher") # Refresh every 3 seconds
+st_autorefresh(interval=2000, key="data_refresher")
 
-# --- SIDEBAR ---
-st.sidebar.title("Configuration")
-try:
-    health = requests.get(f"{API_URL}/health", timeout=1).json()
-    st.sidebar.success(f"Core Backend: {health.get('status', 'Unknown')}")
-except Exception:
-    st.sidebar.error("Core Backend Offline")
+# --- STATE MANAGEMENT ---
+if 'view_mode' not in st.session_state:
+    st.session_state.view_mode = 'global' # 'global' or 'detail'
+if 'selected_game_id' not in st.session_state:
+    st.session_state.selected_game_id = None
 
-# --- MAIN CONTENT ---
-st.title("Game Analytics Real-Time Dashboard")
-st.markdown("Global Overview (Live Data)")
+# --- CSS STYLING ---
+st.markdown(
+    """
+    <style>
+    /* Card Container Styling */
+    div[data-testid="stVerticalBlock"] > div[data-testid="stVerticalBlock"] {
+        border-radius: 10px;
+    }
+    
+    /* Small Image Height for Compact Cards */
+    div[data-testid="stImage"] > img {
+        height: 100px !important; 
+        width: 100% !important;
+        object-fit: cover !important;
+        border-radius: 5px;
+        margin-bottom: 5px;
+    }
 
-games = get_games()
+    /* Metric Value Font Size */
+    div[data-testid="stMetricValue"] {
+        font-size: 1.2rem !important;
+    }
+    
+    /* Metric Label Font Size */
+    div[data-testid="stMetricLabel"] {
+        font-size: 0.8rem !important;
+    }
+    
+    /* Compact Header */
+    h3 {
+        font-size: 1.1rem !important;
+        padding-top: 0px !important;
+        margin-bottom: 5px !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
-# Display Grid of Games
-cols = st.columns(3)
-for idx, game in enumerate(games):
-    with cols[idx % 3]:
-        with st.container(border=True):
-            st.image(game["cover_url"], use_container_width=True)
-            st.subheader(game["name"])
-            st.write(f"Tags: {', '.join(game['tags'])}")
-            
-            # Display real-time metrics
-            metrics = st.session_state.game_metrics.get(game['id'], {})
-            st.metric("Players", f"{metrics.get('player_count', 0):,}")
-            st.metric("Sentiment", f"{metrics.get('sentiment_score', 0.0):.2f}")
-            st.metric("Purchases", f"{metrics.get('total_purchases', 0)} (${metrics.get('purchase_amount', 0.0):.2f})")
-            
-            # Add a button for game details (future expansion)
-            if st.button(f"View Details ->", key=f"btn_{game['id']}"):
-                st.session_state.selected_game_id = game["id"]
-                # This reruns the script, could be expanded to a detail page
-                st.rerun()
+# --- MAIN UI ---
+metrics_snapshot, logs_snapshot = store.get_snapshot()
 
-st.divider()
+# === VIEW 1: GLOBAL GRID ===
+if st.session_state.view_mode == 'global':
+    st.title("Game Analytics Real-Time Dashboard")
+    
+    games = get_games()
+    
+    # Use 4 columns instead of 3 to make cards smaller
+    cols = st.columns(4)
+    
+    for idx, game in enumerate(games):
+        with cols[idx % 4]:
+            with st.container(border=True):
+                # Header
+                st.subheader(game["name"])
+                
+                # Image
+                st.image(game["cover_url"], use_container_width=True)
+                
+                # Metrics
+                m = metrics_snapshot.get(game['id'], {})
+                
+                # Compact Metrics
+                c1, c2 = st.columns(2)
+                c1.metric("Users", f"{m.get('player_count', 0):,}")
+                c2.metric("Mood", f"{m.get('sentiment_score', 0.0):.2f}")
+                
+                # Action Button
+                if st.button(f"Analytics", key=f"btn_{game['id']}", use_container_width=True):
+                    st.session_state.selected_game_id = game['id']
+                    st.session_state.view_mode = 'detail'
+                    st.rerun()
 
-st.subheader("Recent Events Log")
-log_placeholder = st.empty()
-with log_placeholder.container():
-    for log_entry in st.session_state.event_log:
-        st.code(log_entry, language="json")
+    st.divider()
+    st.subheader("Live Event Log")
+    st.text_area("Latest Events", value="\n".join(logs_snapshot), height=150, disabled=True)
 
-# Conditional rendering for game details (future feature)
-if st.session_state.get("selected_game_id"):
-    # This block would handle displaying a detail page, for now just a message
-    st.info(f"Viewing details for {st.session_state.selected_game_id} (feature coming soon!)")
+# === VIEW 2: DETAIL PAGE ===
+elif st.session_state.view_mode == 'detail':
+    game_id = st.session_state.selected_game_id
+    game = get_game_by_id(game_id)
+    m = metrics_snapshot.get(game_id, {})
+    
+    if st.button("← Back to Global View"):
+        st.session_state.view_mode = 'global'
+        st.session_state.selected_game_id = None
+        st.rerun()
+        
+    st.title(f"{game['name']} - Analytics")
+    
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        st.image(game["cover_url"], use_container_width=True)
+        st.write(f"**Tags:** {', '.join(game['tags'])}")
+        
+    with col2:
+        # Real-time Metrics Big Display
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Active Players", f"{m.get('player_count', 0):,}")
+        m2.metric("Sentiment Score", f"{m.get('sentiment_score', 0.0):.2f}")
+        m3.metric("Total Purchases", f"{m.get('total_purchases', 0)}")
+        m4.metric("Revenue", f"${m.get('purchase_amount', 0.0):.2f}")
+        
+        st.markdown("### Real-Time Charts")
+        # In a real implementation, we would keep a history list in the store for charting.
+        # For now, we mock a chart based on current snapshot to show layout.
+        
+        # Mocking a history for visualization purposes since we only store snapshot
+        chart_data = pd.DataFrame({
+            "Time": pd.date_range(start="now", periods=10, freq="min"),
+            "Players": [m.get('player_count', 0) * (1 + i*0.01) for i in range(10)]
+        })
+        st.line_chart(chart_data, x="Time", y="Players")
+        
+        st.info("Charts will populate with historical data in the next update.")
+
+    st.markdown("### Recent Events for this Game")
+    # Filter logs for this game
+    game_logs = [l for l in logs_snapshot if game['name'] in l]
+    st.text_area("Game Events", value="\n".join(game_logs) if game_logs else "No recent events.", height=200)
