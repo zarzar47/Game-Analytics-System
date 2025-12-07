@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  # 1. The Core Backend
+  api:
+    build: ./apps/api
+    ports:
+      - "8000:8000"
+    environment:
+      - SUPABASE_DB_URL=${SUPABASE_DB_URL}
+    volumes:
+      - ./apps/api:/app # Hot reloading for Python
+
+  # 2. The Faker Service (Internal Worker)
+  faker:
+    build: ./apps/faker
+    environment:
+      - API_URL=http://api:8000/internal/ingest
+    depends_on:
+      - api
+
+  # 3. The Frontend (Optional in Docker, usually run natively via 'pnpm dev')
+  # web:
+  #   build: ./apps/web
+  #   ports: ["3000:3000"]
