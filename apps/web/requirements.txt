@@ -4,3 +4,4 @@ requests
 plotly
 watchdog
 kafka-python
+streamlit-autorefresh
