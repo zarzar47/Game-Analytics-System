@@ -2,7 +2,7 @@
   {
     "id": "valorant",
     "name": "Valorant",
-    "cover_url": "https://upload.wikimedia.org/wikipedia/en/thumb/f/f6/Valorant_cover.jpg/220px-Valorant_cover.jpg",
+    "cover_url": "https://cdn2.steamgriddb.com/thumb/9edb6b9b7fc3b263b86740c635839dc4.jpg",
     "tags": ["FPS", "Tactical", "Competitive", "Hero Shooter"]
   },
   {
@@ -14,13 +14,13 @@
   {
     "id": "minecraft",
     "name": "Minecraft",
-    "cover_url": "https://upload.wikimedia.org/wikipedia/en/thumb/5/51/Minecraft_cover.png/220px-Minecraft_cover.png",
+    "cover_url": "https://cdn2.steamgriddb.com/thumb/a73027901f88055aaa0fd1a9e25d36c7.jpg",
     "tags": ["Sandbox", "Survival", "Multiplayer", "Creative"]
   },
   {
     "id": "stardew_valley",
     "name": "Stardew Valley",
-    "cover_url": "https://upload.wikimedia.org/wikipedia/en/thumb/f/fd/Stardew_Valley.jpg/220px-Stardew_Valley.jpg",
+    "cover_url": "https://cdn2.steamgriddb.com/thumb/ae3cc6a9c0dfe9bef84a66e311bb779a.jpg",
     "tags": ["Simulation", "Farming", "Indie", "RPG"]
   }
 ]
