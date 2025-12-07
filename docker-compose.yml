@@ -1,17 +1,33 @@
 version: '3.8'
 
 services:
-  # 1. The Core Backend
+  # 1. Local Database
+  db:
+    image: postgres:15-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: rafay
+      POSTGRES_PASSWORD: rafay
+      POSTGRES_DB: game_analytics
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # 2. The Core Backend
   api:
     build: ./apps/api
     ports:
       - "8000:8000"
     environment:
-      - SUPABASE_DB_URL=${SUPABASE_DB_URL}
+      # Using local DB connection string
+      - DATABASE_URL=postgresql+asyncpg://rafay:rafay@db:5432/game_analytics
+    depends_on:
+      - db
     volumes:
       - ./apps/api:/app # Hot reloading for Python
 
-  # 2. The Faker Service (Internal Worker)
+  # 3. The Faker Service (Internal Worker)
   faker:
     build: ./apps/faker
     environment:
@@ -19,7 +35,7 @@ services:
     depends_on:
       - api
 
-  # 3. The Frontend Dashboard (Streamlit)
+  # 4. The Frontend Dashboard (Streamlit)
   web:
     build: ./apps/web
     ports:
@@ -30,3 +46,6 @@ services:
       - api
     volumes:
       - ./apps/web:/app # Hot reloading for Streamlit
+
+volumes:
+  postgres_data:
