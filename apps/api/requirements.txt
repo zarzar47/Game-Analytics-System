@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+asyncpg
+supabase
+pydantic
+pydantic-settings
+httpx
