@@ -1,7 +1,10 @@
 streamlit
-pandas
+numpy<1.25.0
+pandas<2.0.0
 requests
 plotly
 watchdog
 kafka-python
 streamlit-autorefresh
+psycopg2-binary
+SQLAlchemy

@@ -7,7 +7,7 @@ COPY packages/game_library /tmp/game_library
 RUN pip install /tmp/game_library
 
 # Install App Dependencies
-RUN pip install requests kafka-python
+RUN pip install requests kafka-python Faker
 
 # Copy App Code
 COPY apps/faker/ .
