@@ -1,14 +1,13 @@
 import streamlit as st
 import pandas as pd
-import requests
 import os
 import time
 import json
 import threading
 import copy
 import warnings
-from kafka import KafkaConsumer
-from game_library import get_games, get_game_by_id
+from kafka import KafkaConsumer, errors as kafka_errors
+from game_library import get_games
 from streamlit_autorefresh import st_autorefresh
 from spark_db import get_revenue_data, get_concurrency_data, get_performance_data
 
@@ -16,7 +15,7 @@ from spark_db import get_revenue_data, get_concurrency_data, get_performance_dat
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # Configuration
-API_URL = os.getenv("API_URL", "http://api:8000")
+API_URL = os.getenv("API_URL", "http://localhost:8000")
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
 TOPIC_NAME = "GameAnalytics"
 
@@ -40,9 +39,9 @@ class GameDataStore:
                 'avg_latency': 50.0,
                 'sentiment': 0.8,
                 'events_processed': 0,
-                'recent_purchases': [], # New: Store {item, amount}
-                'player_archetypes': {}, # New: Count of CASUAL, WHALE etc.
-                'events_by_type': {}, # New: Count of heartbeats, reviews etc.
+                'recent_purchases': [], # Store {item, amount}
+                'player_archetypes': {}, # Count of CASUAL, WHALE etc.
+                'events_by_type': {}, # Count of heartbeats, reviews etc.
             }
             for game in self.games
         }
@@ -96,7 +95,7 @@ class GameDataStore:
 
             # Log significant events
             if etype in ['session_start', 'level_up', 'review']:
-                user = event.get('player_id', 'Unknown')[-4:]
+                user = str(event.get('player_id', 'Unknown'))[-4:]
                 self._add_log(f"{etype.upper()}: User-{user} in {event.get('game_name')}")
 
     def _add_log(self, msg):
@@ -113,20 +112,33 @@ class GameDataStore:
             threading.Thread(target=self._kafka_listener, daemon=True).start()
 
     def _kafka_listener(self):
+        """Robust Kafka Listener with auto-reconnect."""
         while self._running:
             try:
                 consumer = KafkaConsumer(
                     TOPIC_NAME,
                     bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
                     value_deserializer=lambda x: json.loads(x.decode('utf-8')),
-                    auto_offset_reset='latest'
+                    auto_offset_reset='latest',
+                    request_timeout_ms=5000,
+                    consumer_timeout_ms=1000 # Allow loop to check self._running
                 )
                 print("✅ Frontend connected to Kafka Stream")
+                
                 for msg in consumer:
                     if not self._running: break
-                    self.update(msg.value)
-            except Exception:
+                    if msg and msg.value:
+                        self.update(msg.value)
+                        
+            except kafka_errors.NoBrokersAvailable:
+                print("⚠️ Kafka Broker unavailable. Retrying in 5s...")
+                time.sleep(5)
+            except Exception as e:
+                print(f"⚠️ Kafka Error: {e}")
                 time.sleep(2)
+            finally:
+                if 'consumer' in locals():
+                    consumer.close()
 
 @st.cache_resource
 def get_global_store():
@@ -138,14 +150,11 @@ store = get_global_store()
 
 # --- UI COMPONENTS ---
 
-def render_kpi_card(label, value, delta=None, color="normal"):
-    st.metric(label=label, value=value, delta=delta)
-
 def render_game_detail(game, metrics, revenue_df, concurrency_df, performance_df):
     st.title(f"📊 {game['name']} Analytics")
     
     # Top Level KPIs from Live Kafka Stream
-    st.subheader("Live Status (from Kafka)")
+    st.subheader("Live Status (Real-time)")
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Live Players", f"{metrics['active_users']:,}")
     k2.metric("Revenue (Session)", f"${metrics['total_revenue']:,.2f}")
@@ -155,7 +164,7 @@ def render_game_detail(game, metrics, revenue_df, concurrency_df, performance_df
     st.divider()
 
     # Spark-Powered Analytics Section
-    st.header("⚡ Spark-Powered Analytics (1-minutely)")
+    st.header("⚡ Spark Analytics (Aggregated 1-min)")
     
     c1, c2 = st.columns(2)
     
@@ -163,14 +172,20 @@ def render_game_detail(game, metrics, revenue_df, concurrency_df, performance_df
         st.subheader("Revenue by Player Type")
         if not revenue_df.empty:
             game_revenue = revenue_df[revenue_df['game_name'] == game['name']]
-            st.bar_chart(game_revenue, x='player_type', y='total_revenue', color='player_type')
+            if not game_revenue.empty:
+                st.bar_chart(game_revenue, x='player_type', y='total_revenue', color='player_type')
+            else:
+                st.info("No revenue data for this game yet.")
         else:
             st.caption("Waiting for Spark revenue data...")
 
         st.subheader("Player Concurrency by Region")
         if not concurrency_df.empty:
             game_concurrency = concurrency_df[concurrency_df['game_name'] == game['name']]
-            st.bar_chart(game_concurrency, x='region', y='concurrent_players', color='region')
+            if not game_concurrency.empty:
+                st.bar_chart(game_concurrency, x='region', y='concurrent_players', color='region')
+            else:
+                st.info("No concurrency data for this game yet.")
         else:
             st.caption("Waiting for Spark concurrency data...")
 
@@ -178,25 +193,29 @@ def render_game_detail(game, metrics, revenue_df, concurrency_df, performance_df
         st.subheader("Performance by Platform & Region")
         if not performance_df.empty:
             game_perf = performance_df[performance_df['game_name'] == game['name']]
-            # FPS Chart
-            st.bar_chart(game_perf, x='platform', y='avg_fps', color='region')
-             # Latency Chart
-            st.bar_chart(game_perf, x='platform', y='avg_latency', color='region')
+            if not game_perf.empty:
+                st.write("**FPS by Platform**")
+                st.bar_chart(game_perf, x='platform', y='avg_fps', color='region')
+                st.write("**Latency by Platform**")
+                st.bar_chart(game_perf, x='platform', y='avg_latency', color='region')
+            else:
+                st.info("No performance data for this game yet.")
         else:
             st.caption("Waiting for Spark performance data...")
 
     st.divider()
     
     # Existing detailed analytics from Kafka
-    st.header("Live Feed Details (from Kafka)")
+    st.header("Live Feed Details")
     c1, c2 = st.columns((1, 1))
     with c1:
         st.subheader("Recent Purchases")
         if metrics['recent_purchases']:
             purchase_df = pd.DataFrame(metrics['recent_purchases'])
-            st.dataframe(purchase_df, use_container_width=True, hide_index=True)
+            # FIXED: Replaced use_container_width with width="stretch"
+            st.dataframe(purchase_df, width="stretch", hide_index=True)
         else:
-            st.caption("No purchases this session.")
+            st.info("No purchases recorded in this session.")
 
     with c2:
         st.subheader("Event Stream")
@@ -207,16 +226,17 @@ def render_game_detail(game, metrics, revenue_df, concurrency_df, performance_df
             )
             st.bar_chart(events_df, x='Event Type', y='Count')
         else:
-            st.caption("Waiting for events...")
+            st.info("Waiting for event stream...")
 
 
 # --- MAIN APP LAYOUT ---
-st_autorefresh(interval=2000, key="ui_refresh") # 2s Refresh Rate
+# 2s Refresh Rate
+st_autorefresh(interval=2000, key="ui_refresh")
 
 if 'view' not in st.session_state: st.session_state.view = 'dashboard'
 if 'selected_game' not in st.session_state: st.session_state.selected_game = None
 
-# Get latest data from both sources
+# Get latest data
 kafka_metrics, logs = store.get_view_data()
 spark_revenue = get_revenue_data()
 spark_concurrency = get_concurrency_data()
@@ -226,52 +246,74 @@ spark_performance = get_performance_data()
 # SIDEBAR
 with st.sidebar:
     st.header("🎮 Operations Center")
-    st.write("Stream Status: **ONLINE**")
+    status_color = "green" if any(kafka_metrics.values()) else "red"
+    st.markdown(f"Stream Status: :{status_color}[**ONLINE**]")
     st.divider()
-    st.subheader("Live Feed")
-    for log in logs:
-        st.caption(log)
+    st.subheader("Live Log Feed")
+    log_container = st.container(height=400)
+    with log_container:
+        for log in logs:
+            st.text(log)
 
+# PAGE ROUTING
 # PAGE ROUTING
 if st.session_state.view == 'dashboard':
     st.title("🌍 Global Operations Dashboard")
     
     games = get_games()
-    cols = st.columns(len(games))
+    
+    # CSS to force uniform height on the containers (optional but recommended for alignment)
+    st.markdown("""
+    <style>
+    div[data-testid="stVerticalBlock"] > div[data-testid="stVerticalBlockBorderWrapper"] {
+        height: 100%;
+        min-height: 350px; 
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # Use more columns (4 or 5) to naturally make boxes smaller
+    cols = st.columns(5) 
     
     for idx, game in enumerate(games):
         m = kafka_metrics.get(game['id'], {})
-        with cols[idx]:
+        # Wrap around columns (modulo 5 since we defined 5 columns)
+        col_idx = idx % 5
+        
+        with cols[col_idx]:
             with st.container(border=True):
-                st.image(game['cover_url'], use_container_width=True)
-                st.markdown(f"**{game['name']}**")
+                # FIXED: Force a constant width of 150 pixels for uniformity
+                # The image will scale its height to maintain aspect ratio, 
+                # but the width will be locked.
+                st.image(game['cover_url'], width=150) 
+                
+                st.markdown(f"##### {game['name']}")
                 
                 # Default values from Kafka
                 total_players = m.get('active_users', 0)
                 total_rev = int(m.get('total_revenue', 0))
 
-                # Show concurrency from Spark if available and not empty
+                # Overlay Spark data if available
                 if not spark_concurrency.empty:
                     game_concurrency = spark_concurrency[spark_concurrency['game_name'] == game['name']]
                     if not game_concurrency.empty:
                         total_players = int(game_concurrency['concurrent_players'].sum())
                 
-                # Show revenue from Spark if available and not empty
                 if not spark_revenue.empty:
                     game_revenue = spark_revenue[spark_revenue['game_name'] == game['name']]
                     if not game_revenue.empty:
                         total_rev = int(game_revenue['total_revenue'].sum())
 
-                st.write(f"👥 {total_players} Active")
-                st.write(f"💰 ${total_rev}")
+                # Compact metrics for smaller cards
+                st.caption(f"👥 **{total_players}** | 💰 **${total_rev}**")
                 
-                if st.button("View Details", key=f"btn_{game['id']}"):
+                if st.button("Analytics", key=f"btn_{game['id']}", use_container_width=True):
                     st.session_state.selected_game = game
                     st.session_state.view = 'detail'
                     st.rerun()
 
 elif st.session_state.view == 'detail':
-    if st.button("← Back to Global"):
+    if st.button("← Back to Global Dashboard"):
         st.session_state.view = 'dashboard'
         st.rerun()
         

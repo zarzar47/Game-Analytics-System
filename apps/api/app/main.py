@@ -12,6 +12,7 @@ import asyncio
 import json
 import os
 import datetime
+from dateutil import parser
 
 app = FastAPI(title="Game Analytics Core")
 
@@ -47,69 +48,78 @@ class HistoricalMetric(BaseModel):
 # --- BACKGROUND TASK ---
 async def consume_kafka():
     """Background task to consume Kafka messages and save to DB."""
-    print("Starting Kafka Consumer Background Task...")
-    consumer = AIOKafkaConsumer(
-        TOPIC_NAME,
-        bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
-        group_id="api-db-worker",
-        value_deserializer=lambda x: json.loads(x.decode('utf-8'))
-    )
-    
-    try:
-        await consumer.start()
-        print("API Consumer Connected to Kafka")
-        async for msg in consumer:
-            payload = msg.value
-            
-            async with AsyncSessionLocal() as session:
-                async with session.begin():
-                    # Parse timestamp
-                    ts = None
-                    if payload.get("timestamp"):
-                        ts = datetime.datetime.fromtimestamp(payload["timestamp"])
+    while True:
+        print("Starting Kafka Consumer Background Task...")
+        consumer = AIOKafkaConsumer(
+            TOPIC_NAME,
+            bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
+            group_id="api-db-worker",
+            value_deserializer=lambda x: json.loads(x.decode('utf-8'))
+        )
+        
+        try:
+            await consumer.start()
+            print("API Consumer Connected to Kafka")
+            async for msg in consumer:
+                payload = msg.value
+                
+                async with AsyncSessionLocal() as session:
+                    async with session.begin():
+                        # Parse timestamp
+                        ts = None
+                        if payload.get("timestamp"):
+                            try:
+                                # This handles both ISO strings and Unix epochs
+                                if isinstance(payload["timestamp"], (int, float)):
+                                    ts = datetime.datetime.fromtimestamp(payload["timestamp"])
+                                else:
+                                    ts = parser.parse(payload["timestamp"])
+                            except:
+                                ts = datetime.datetime.utcnow()
 
-                    new_metric = GameMetric(
-                        # Base
-                        game_id=payload.get("game_id"),
-                        game_name=payload.get("game_name"),
-                        event_type=payload.get("event_type"),
-                        timestamp=ts,
-                        
-                        # Player & Session
-                        player_id=payload.get("player_id"),
-                        session_id=payload.get("session_id"),
-                        match_id=payload.get("match_id"),
-                        region=payload.get("region"),
-                        platform=payload.get("platform"),
-                        player_type=payload.get("player_type"),
-                        country=payload.get("country"),
+                        new_metric = GameMetric(
+                            # Base
+                            game_id=payload.get("game_id"),
+                            game_name=payload.get("game_name"),
+                            event_type=payload.get("event_type"),
+                            timestamp=ts,
+                            
+                            # Player & Session
+                            player_id=payload.get("player_id"),
+                            session_id=payload.get("session_id"),
+                            match_id=payload.get("match_id"),
+                            region=payload.get("region"),
+                            platform=payload.get("platform"),
+                            player_type=payload.get("player_type"),
+                            country=payload.get("country"),
 
-                        # Gameplay & Performance
-                        player_count=payload.get("player_count"),
-                        sentiment_score=payload.get("sentiment_score"),
-                        review_text=payload.get("review_text"),
-                        level=payload.get("level"),
-                        fps=payload.get("fps"),
-                        latency_ms=payload.get("latency_ms"),
+                            # Gameplay & Performance
+                            player_count=payload.get("player_count"),
+                            sentiment_score=payload.get("sentiment_score"),
+                            review_text=payload.get("review_text"),
+                            level=payload.get("level"),
+                            fps=payload.get("fps"),
+                            latency_ms=payload.get("latency_ms"),
 
-                        # Monetization
-                        purchase_amount=payload.get("purchase_amount"),
-                        currency=payload.get("currency"),
-                        item_id=payload.get("item_id"),
+                            # Monetization
+                            purchase_amount=payload.get("purchase_amount"),
+                            currency=payload.get("currency"),
+                            item_id=payload.get("item_id"),
 
-                        # Legacy - not in faker, but in model
-                        playtime_session=payload.get("playtime_session"),
-                        playtime_total=payload.get("playtime_total"),
-                    )
-                    print(f'Added new metric to session {new_metric}')
-                    session.add(new_metric)
-                # Commit happens automatically on exit of session.begin() block if no error
-            
-            print(f"DB STORE: {payload.get('event_type')} for {payload.get('game_id')}")
-    except Exception as e:
-        print(f"Kafka Consumer Error: {e}")
-    finally:
-        await consumer.stop()
+                            # Legacy - not in faker, but in model
+                            playtime_session=payload.get("playtime_session"),
+                            playtime_total=payload.get("playtime_total"),
+                        )
+                        print(f'Added new metric to session {new_metric}')
+                        session.add(new_metric)
+                    # Commit happens automatically on exit of session.begin() block if no error
+                
+                # print(f"DB STORE: {payload.get('event_type')} for {payload.get('game_id')}")
+        except Exception as e:
+            print(f"Kafka Consumer Error: {e}. Reconnecting in 5s...")
+            await asyncio.sleep(5) # Wait before retrying
+        finally:
+            await consumer.stop()
 
 @app.on_event("startup")
 async def startup_event():
@@ -172,7 +182,7 @@ async def get_spark_revenue(db: AsyncSession = Depends(get_db)):
             FROM realtime_revenue
         ) AS ranked
         WHERE rn = 1;
-    """)
+    """)    
     
     try:
         result = await db.execute(query)
@@ -194,6 +204,7 @@ async def get_spark_concurrency(db: AsyncSession = Depends(get_db)):
     """)
     try:
         result = await db.execute(query)
+        print(result)
         return [dict(row._mapping) for row in result]
     except Exception as e:
         if "does not exist" in str(e):

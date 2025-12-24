@@ -1,0 +1,155 @@
+The reason Spark data is "not going anywhere" is usually due to one of three things: Watermark delays, Timestamp casting failures, or JDBC silent failures.
+
+Here are the specific changes to fix the pipeline and add better debugging visibility.
+
+1. Fix the Spark Timestamp Issue
+
+In your current apps/spark-processor/main.py, the Faker sends an ISO format string. If Spark fails to cast this correctly, the timestamp column becomes NULL. Since all your analytics rely on window(timestamp, ...), a NULL timestamp means zero rows are processed.
+
+Change in apps/spark-processor/main.py:
+Add a print statement inside the batch writer and fix the timestamp casting.
+
+code
+Python
+download
+content_copy
+expand_less
+# Update your main block in apps/spark-processor/main.py
+    # ... previous code ...
+    events_df = (
+        kafka_stream_df.selectExpr("CAST(value AS STRING)")
+        .select(from_json(col("value"), EVENT_SCHEMA).alias("data"))
+        .select("data.*")
+    )
+    
+    # DEBUG: Ensure timestamps are parsing correctly
+    # Use to_timestamp if cast(TimestampType) is being finicky with ISO formats
+    from pyspark.sql.functions import to_timestamp
+    events_df = events_df.withColumn("timestamp", to_timestamp(col("timestamp")))
+
+    # LOGGING: Add a console sink for debugging (Remove in production)
+    # This lets you see in 'docker logs spark-processor' if data is actually arriving
+    debug_query = events_df.writeStream \
+        .format("console") \
+        .trigger(processingTime='10 seconds') \
+        .start()
+2. Fix the Watermark/Output Mode
+
+Spark's withWatermark paired with window often waits for the "event time" to move forward before committing a window to the database. If your Faker is slow, Spark might wait minutes before writing the first row.
+
+Change in your processing functions (Revenue, Concurrency, etc.):
+Change outputMode and ensure foreachBatch is actually executing.
+
+code
+Python
+download
+content_copy
+expand_less
+def write_to_postgres(df, epoch_id, table_name):
+    # ADD THIS LOGGING LINE
+    print(f"DEBUG: Batch {epoch_id} for {table_name} contains {df.count()} rows.")
+    
+    if df.count() > 0:
+        (
+            df.write
+            .format("jdbc")
+            .option("url", POSTGRES_URL)
+            .option("driver", "org.postgresql.Driver")
+            .option("dbtable", table_name)
+            .option("user", POSTGRES_USER)
+            .option("password", POSTGRES_PASSWORD)
+            .mode("append") 
+            .save()
+        )
+3. Verify Database Connectivity (Docker Network)
+
+Spark Workers need the PostgreSQL JDBC driver. You are passing it via --packages, but sometimes the worker cannot download it if it lacks internet access.
+
+Change in docker-compose.yml:
+Ensure the Spark Processor and Workers are on the same network as the DB.
+
+code
+Yaml
+download
+content_copy
+expand_less
+spark-processor:
+    # ... existing config ...
+    depends_on:
+      db:
+        condition: service_healthy # Add a healthcheck to DB
+      kafka:
+        condition: service_started
+
+Add Healthcheck to db service in docker-compose.yml:
+
+code
+Yaml
+download
+content_copy
+expand_less
+db:
+    image: postgres:15-alpine
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rafay -d game_analytics"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+4. Database Schema Verification
+
+If Spark tries to write data where the column names don't match exactly (e.g., avg_fps vs avgfps), the JDBC write will fail silently or crash the executor.
+
+Verify apps/spark-processor/init.sql matches the .select() in Spark:
+In process_performance, you select:
+avg_fps, avg_latency.
+In init.sql, you have:
+avg_fps DOUBLE PRECISION, avg_latency DOUBLE PRECISION.
+This looks correct, but if you changed one and not the other, the stream will die.
+
+5. Debugging Steps (The "Checklist")
+
+Run these commands in order to find where the pipe is blocked:
+
+Check Kafka: Is data actually flowing?
+
+code
+Bash
+download
+content_copy
+expand_less
+docker exec -it kafka kafka-console-consumer --bootstrap-server localhost:9092 --topic GameAnalytics --from-beginning --max-messages 5
+
+Check Spark Logs: Is Spark throwing "AnalysisException" or "Connection Refused"?
+
+code
+Bash
+download
+content_copy
+expand_less
+docker logs -f spark-processor
+
+Look for the line: DEBUG: Batch X for realtime_revenue contains Y rows.
+
+Check Postgres directly: Did the tables actually get data?
+
+code
+Bash
+download
+content_copy
+expand_less
+docker exec -it <db_container_id> psql -U rafay -d game_analytics -c "SELECT count(*) FROM realtime_revenue;"
+
+Check API: Is the API returning a 404 (Table not found) or an empty list []?
+
+Visit http://localhost:8000/analytics/revenue in your browser.
+
+If it's [], Spark hasn't written anything yet.
+
+If it's a 404, the table doesn't exist.
+
+One final potential issue: The partition by query
+
+In your API, you use a complex window function:
+ROW_NUMBER() OVER(PARTITION BY game_name, player_type ORDER BY window_start DESC)
+
+If Spark writes multiple batches for the same minute, and you don't have enough distinct window_start values, the frontend might look like it's not updating because it's always picking the same "latest" row. Ensure the Faker's system clock and the Docker container's clocks are synced (Docker usually handles this, but a restart helps).

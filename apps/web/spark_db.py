@@ -6,7 +6,7 @@ import streamlit as st
 # --- API CONNECTION ---
 
 # Fetch the API URL from environment variables, with a default for local dev
-API_URL = os.getenv("API_URL", "http://localhost:8000")
+API_URL = os.getenv("API_URL", "http://api:8000")
 
 # --- DATA FETCHING FUNCTIONS ---
 
