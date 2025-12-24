@@ -262,12 +262,22 @@ def generate_fake_data():
         if random.random() < 0.1: # Every ~10 ticks
             for g in games:
                 count = sum(1 for p in active_players if p.game['id'] == g['id'])
-                producer.send(TOPIC_NAME, {
+                event = {
+                    "event_id": str(uuid.uuid4()),
+                    "timestamp": datetime.utcnow().isoformat(),
                     "event_type": "status",
                     "game_id": g['id'],
+                    "game_name": g['name'],
+                    "player_id": None,
+                    "session_id": None,
+                    "region": None,
+                    "platform": None,
+                    "player_type": None,
+                    "country": None,
                     "player_count": count,
-                    "timestamp": datetime.utcnow().isoformat()
-                })
+                }
+                producer.send(TOPIC_NAME, event)
+
 
         time.sleep(1)
 

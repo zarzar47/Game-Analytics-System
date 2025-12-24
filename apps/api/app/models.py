@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime
+from sqlalchemy import Column, Integer, String, Float, DateTime, BigInteger
 from sqlalchemy.sql import func
 from .database import Base
 
@@ -42,3 +42,31 @@ class GameMetric(Base):
     # --- Monetization Details (New) ---
     currency = Column(String, nullable=True)
     item_id = Column(String, nullable=True)
+
+class RealtimeRevenue(Base):
+    __tablename__ = "realtime_revenue"
+    window_start = Column(DateTime, primary_key=True)
+    window_end = Column(DateTime)
+    game_name = Column(String, primary_key=True)
+    player_type = Column(String, primary_key=True)
+    total_revenue = Column(Float)
+    avg_purchase = Column(Float)
+    unique_purchasers = Column(BigInteger)
+
+class RealtimeConcurrency(Base):
+    __tablename__ = "realtime_concurrency"
+    window_start = Column(DateTime, primary_key=True)
+    window_end = Column(DateTime)
+    game_name = Column(String, primary_key=True)
+    region = Column(String, primary_key=True)
+    concurrent_players = Column(BigInteger)
+
+class RealtimePerformance(Base):
+    __tablename__ = "realtime_performance"
+    window_start = Column(DateTime, primary_key=True)
+    window_end = Column(DateTime)
+    game_name = Column(String, primary_key=True)
+    platform = Column(String, primary_key=True)
+    region = Column(String, primary_key=True)
+    avg_fps = Column(Float)
+    avg_latency = Column(Float)

@@ -1,85 +1,53 @@
 import os
 import pandas as pd
-import psycopg2
+import requests
 import streamlit as st
-from sqlalchemy import create_engine
 
-# --- DATABASE CONNECTION ---
+# --- API CONNECTION ---
 
-# Use Streamlit's connection management to cache the connection engine
-@st.cache_resource
-def get_db_engine():
-    """Establishes and returns a SQLAlchemy engine for the PostgreSQL database."""
-    try:
-        # postgresql+psycopg2://user:password@host:port/dbname
-        db_url = "postgresql+psycopg2://rafay:rafay@db:5432/game_analytics"
-        engine = create_engine(db_url)
-        return engine
-    except Exception as e:
-        st.error(f"🔥 Could not create database engine: {e}")
-        return None
+# Fetch the API URL from environment variables, with a default for local dev
+API_URL = os.getenv("API_URL", "http://localhost:8000")
 
 # --- DATA FETCHING FUNCTIONS ---
 
-@st.cache_data(ttl=60) # Cache data for 60 seconds
+@st.cache_data(ttl=10) # Cache data for 10 seconds to align with Spark's trigger
 def get_revenue_data():
-    """Fetches real-time revenue analytics from the Spark-processed table."""
-    engine = get_db_engine()
-    if engine:
-        try:
-            # Query for the latest window of data for each game/player_type combo
-            query = """
-                SELECT * FROM (
-                    SELECT *, ROW_NUMBER() OVER(PARTITION BY game_name, player_type ORDER BY window_start DESC) as rn
-                    FROM realtime_revenue
-                ) AS ranked
-                WHERE rn = 1;
-            """
-            with engine.connect() as conn:
-                df = pd.read_sql_query(query, conn)
-            return df
-        except Exception as e:
-            st.warning(f"Could not query revenue data. Is the Spark Processor running? Error: {e}")
+    """Fetches real-time revenue analytics from the Spark-processed table via the API."""
+    try:
+        response = requests.get(f"{API_URL}/analytics/revenue")
+        response.raise_for_status()  # Raise an exception for bad status codes
+        data = response.json()
+        return pd.DataFrame(data)
+    except requests.exceptions.RequestException as e:
+        st.warning(f"Could not fetch revenue data from API. Is it running? Error: {e}")
+    except Exception as e:
+        st.warning(f"An error occurred while processing revenue data: {e}")
     return pd.DataFrame()
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=10)
 def get_concurrency_data():
-    """Fetches real-time player concurrency from the Spark-processed table."""
-    engine = get_db_engine()
-    if engine:
-        try:
-            # Query for the latest window of data for each game/region
-            query = """
-                SELECT * FROM (
-                    SELECT *, ROW_NUMBER() OVER(PARTITION BY game_name, region ORDER BY window_start DESC) as rn
-                    FROM realtime_concurrency
-                ) AS ranked
-                WHERE rn = 1;
-            """
-            with engine.connect() as conn:
-                df = pd.read_sql_query(query, conn)
-            return df
-        except Exception as e:
-            st.warning(f"Could not query concurrency data: {e}")
+    """Fetches real-time player concurrency from the Spark-processed table via the API."""
+    try:
+        response = requests.get(f"{API_URL}/analytics/concurrency")
+        response.raise_for_status()
+        data = response.json()
+        return pd.DataFrame(data)
+    except requests.exceptions.RequestException as e:
+        st.warning(f"Could not fetch concurrency data from API: {e}")
+    except Exception as e:
+        st.warning(f"An error occurred while processing concurrency data: {e}")
     return pd.DataFrame()
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=10)
 def get_performance_data():
-    """Fetches real-time game performance from the Spark-processed table."""
-    engine = get_db_engine()
-    if engine:
-        try:
-            # Query for the latest window of data
-            query = """
-                SELECT * FROM (
-                    SELECT *, ROW_NUMBER() OVER(PARTITION BY game_name, platform, region ORDER BY window_start DESC) as rn
-                    FROM realtime_performance
-                ) AS ranked
-                WHERE rn = 1;
-            """
-            with engine.connect() as conn:
-                df = pd.read_sql_query(query, conn)
-            return df
-        except Exception as e:
-            st.warning(f"Could not query performance data: {e}")
+    """Fetches real-time game performance from the Spark-processed table via the API."""
+    try:
+        response = requests.get(f"{API_URL}/analytics/performance")
+        response.raise_for_status()
+        data = response.json()
+        return pd.DataFrame(data)
+    except requests.exceptions.RequestException as e:
+        st.warning(f"Could not fetch performance data from API: {e}")
+    except Exception as e:
+        st.warning(f"An error occurred while processing performance data: {e}")
     return pd.DataFrame()

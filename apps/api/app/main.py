@@ -2,9 +2,9 @@ from fastapi import FastAPI, Depends, HTTPException, Query
 from pydantic import BaseModel
 from typing import Optional, List
 from .database import get_db, AsyncSessionLocal, engine, Base
-from .models import GameMetric
+from .models import GameMetric, RealtimeRevenue, RealtimeConcurrency, RealtimePerformance
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.sql import func
 from game_library import get_games
 from aiokafka import AIOKafkaConsumer
@@ -162,6 +162,61 @@ async def get_game_history(
         )
         for r in records
     ]
+
+@app.get("/analytics/revenue")
+async def get_spark_revenue(db: AsyncSession = Depends(get_db)):
+    # 1. Wrap the string in text()
+    query = text("""
+        SELECT * FROM (
+            SELECT *, ROW_NUMBER() OVER(PARTITION BY game_name, player_type ORDER BY window_start DESC) as rn
+            FROM realtime_revenue
+        ) AS ranked
+        WHERE rn = 1;
+    """)
+    
+    try:
+        result = await db.execute(query)
+        # 2. Convert result rows to dictionaries for JSON response
+        return [dict(row._mapping) for row in result]
+    except Exception as e:
+        if "does not exist" in str(e):
+             raise HTTPException(status_code=404, detail=f"Table realtime_revenue not found. Spark job may not have run yet.")
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+@app.get("/analytics/concurrency")
+async def get_spark_concurrency(db: AsyncSession = Depends(get_db)):
+    query = text("""
+        SELECT * FROM (
+            SELECT *, ROW_NUMBER() OVER(PARTITION BY game_name, region ORDER BY window_start DESC) as rn
+            FROM realtime_concurrency
+        ) AS ranked
+        WHERE rn = 1;
+    """)
+    try:
+        result = await db.execute(query)
+        return [dict(row._mapping) for row in result]
+    except Exception as e:
+        if "does not exist" in str(e):
+             raise HTTPException(status_code=404, detail=f"Table realtime_concurrency not found. Spark job may not have run yet.")
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+
+@app.get("/analytics/performance")
+async def get_spark_performance(db: AsyncSession = Depends(get_db)):
+    query = text("""
+        SELECT * FROM (
+            SELECT *, ROW_NUMBER() OVER(PARTITION BY game_name, platform, region ORDER BY window_start DESC) as rn
+            FROM realtime_performance
+        ) AS ranked
+        WHERE rn = 1;
+    """)
+    try:
+        result = await db.execute(query)
+        return [dict(row._mapping) for row in result]
+    except Exception as e:
+        if "does not exist" in str(e):
+             raise HTTPException(status_code=404, detail=f"Table realtime_performance not found. Spark job may not have run yet.")
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 @app.post("/internal/ingest", status_code=201)
 async def ingest_metrics(payload: GameEvent, db: AsyncSession = Depends(get_db)):

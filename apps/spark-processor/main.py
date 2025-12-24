@@ -8,7 +8,7 @@ KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
 KAFKA_TOPIC = "GameAnalytics"
 
 # Using JDBC URL format for Spark
-POSTGRES_URL = os.getenv("DATABASE_URL", "jdbc:postgresql://localhost:5432/game_analytics")
+POSTGRES_URL = os.getenv("DATABASE_URL", "jdbc:postgresql://db:5432/game_analytics")
 POSTGRES_USER = os.getenv("DATABASE_USER", "rafay")
 POSTGRES_PASSWORD = os.getenv("DATABASE_PASSWORD", "rafay")
 
@@ -16,7 +16,7 @@ POSTGRES_PASSWORD = os.getenv("DATABASE_PASSWORD", "rafay")
 # This must match the structure of the JSON data from the faker
 EVENT_SCHEMA = StructType([
     StructField("event_id", StringType(), True),
-    StructField("timestamp", TimestampType(), True),
+    StructField("timestamp", StringType(), True),
     StructField("event_type", StringType(), True),
     StructField("game_id", StringType(), True),
     StructField("game_name", StringType(), True),
@@ -30,7 +30,8 @@ EVENT_SCHEMA = StructType([
     StructField("fps", DoubleType(), True),
     StructField("latency_ms", DoubleType(), True),
     StructField("level", IntegerType(), True),
-    StructField("sentiment_score", DoubleType(), True)
+    StructField("sentiment_score", DoubleType(), True),
+    StructField("player_count", IntegerType(), True)
 ])
 
 # --- UTILITY FUNCTIONS ---
@@ -117,7 +118,8 @@ def process_revenue(df):
         revenue_df.writeStream
         .foreachBatch(lambda df, epoch_id: write_to_postgres(df, epoch_id, "realtime_revenue"))
         .outputMode("update")
-        .trigger(processingTime="1 minute")
+        .option("checkpointLocation", "/tmp/checkpoints/revenue")
+        .trigger(processingTime="10 seconds")
         .start()
     )
 
@@ -144,7 +146,8 @@ def process_concurrency(df):
         concurrency_df.writeStream
         .foreachBatch(lambda df, epoch_id: write_to_postgres(df, epoch_id, "realtime_concurrency"))
         .outputMode("update")
-        .trigger(processingTime="1 minute")
+        .option("checkpointLocation", "/tmp/checkpoints/concurrency")
+        .trigger(processingTime="10 seconds")
         .start()
     )
 
@@ -177,7 +180,8 @@ def process_performance(df):
         performance_df.writeStream
         .foreachBatch(lambda df, epoch_id: write_to_postgres(df, epoch_id, "realtime_performance"))
         .outputMode("update")
-        .trigger(processingTime="1 minute")
+        .option("checkpointLocation", "/tmp/checkpoints/performance")
+        .trigger(processingTime="10 seconds")
         .start()
     )
 
@@ -197,6 +201,7 @@ if __name__ == "__main__":
         kafka_stream_df.selectExpr("CAST(value AS STRING)")
         .select(from_json(col("value"), EVENT_SCHEMA).alias("data"))
         .select("data.*")
+        .withColumn("timestamp", col("timestamp").cast(TimestampType())) 
     )
 
     # 3. Start all processing streams
