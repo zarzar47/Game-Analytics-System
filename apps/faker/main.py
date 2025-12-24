@@ -233,7 +233,7 @@ def generate_fake_data():
     # 1. Initialize Population
     population_size = 500
     players = [MarkovPlayer(games) for _ in range(population_size)]
-    print(f"🚀 Initialized Markov Population of {population_size} players")
+    print(f"Initialized Markov Population of {population_size} players")
 
     # 2. Simulation Loop
     while True:
