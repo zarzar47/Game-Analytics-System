@@ -24,3 +24,21 @@ class GameMetric(Base):
     
     # Purchase Fields
     purchase_amount = Column(Float, nullable=True)
+
+    # --- Player & Session Details (New) ---
+    player_id = Column(String, nullable=True, index=True)
+    session_id = Column(String, nullable=True, index=True)
+    match_id = Column(String, nullable=True, index=True)
+    region = Column(String, nullable=True)
+    platform = Column(String, nullable=True)
+    player_type = Column(String, nullable=True) # Archetype: CASUAL, HARDCORE, WHALE
+    country = Column(String, nullable=True)
+
+    # --- Performance & Gameplay (New) ---
+    fps = Column(Integer, nullable=True)
+    latency_ms = Column(Integer, nullable=True)
+    level = Column(Integer, nullable=True) # From level_up events
+
+    # --- Monetization Details (New) ---
+    currency = Column(String, nullable=True)
+    item_id = Column(String, nullable=True)

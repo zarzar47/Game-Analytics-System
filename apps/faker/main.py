@@ -49,6 +49,7 @@ ARCHETYPES = {
             STATE_SHOP:        {STATE_LOBBY: 0.9, STATE_SHOP: 0.1}
         }
     },
+    
     'WHALE': {
         'churn_prob': 0.02,
         'skill': 0.5,

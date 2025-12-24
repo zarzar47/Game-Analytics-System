@@ -69,21 +69,42 @@ async def consume_kafka():
                         ts = datetime.datetime.fromtimestamp(payload["timestamp"])
 
                     new_metric = GameMetric(
+                        # Base
                         game_id=payload.get("game_id"),
                         game_name=payload.get("game_name"),
                         event_type=payload.get("event_type"),
                         timestamp=ts,
+                        
+                        # Player & Session
+                        player_id=payload.get("player_id"),
+                        session_id=payload.get("session_id"),
+                        match_id=payload.get("match_id"),
+                        region=payload.get("region"),
+                        platform=payload.get("platform"),
+                        player_type=payload.get("player_type"),
+                        country=payload.get("country"),
+
+                        # Gameplay & Performance
                         player_count=payload.get("player_count"),
                         sentiment_score=payload.get("sentiment_score"),
                         review_text=payload.get("review_text"),
+                        level=payload.get("level"),
+                        fps=payload.get("fps"),
+                        latency_ms=payload.get("latency_ms"),
+
+                        # Monetization
+                        purchase_amount=payload.get("purchase_amount"),
+                        currency=payload.get("currency"),
+                        item_id=payload.get("item_id"),
+
+                        # Legacy - not in faker, but in model
                         playtime_session=payload.get("playtime_session"),
                         playtime_total=payload.get("playtime_total"),
-                        purchase_amount=payload.get("purchase_amount"),
                     )
                     session.add(new_metric)
                 # Commit happens automatically on exit of session.begin() block if no error
             
-            # print(f"DB STORE: {payload.get('event_type')} for {payload.get('game_id')}")
+            print(f"DB STORE: {payload.get('event_type')} for {payload.get('game_id')}")
     except Exception as e:
         print(f"Kafka Consumer Error: {e}")
     finally:

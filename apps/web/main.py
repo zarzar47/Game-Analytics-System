@@ -30,12 +30,15 @@ class GameDataStore:
         # Schema: { game_id: { ...metrics... } }
         self.metrics = {
             game['id']: {
-                'active_users': 0,      # From 'status' events
-                'total_revenue': 0.0,   # From 'purchase' events
-                'avg_fps': 60.0,        # From 'heartbeat' events (rolling avg)
-                'avg_latency': 50.0,    # From 'heartbeat' events (rolling avg)
-                'sentiment': 0.8,       # From 'review' events
-                'events_processed': 0
+                'active_users': 0,
+                'total_revenue': 0.0,
+                'avg_fps': 60.0,
+                'avg_latency': 50.0,
+                'sentiment': 0.8,
+                'events_processed': 0,
+                'recent_purchases': [], # New: Store {item, amount}
+                'player_archetypes': {}, # New: Count of CASUAL, WHALE etc.
+                'events_by_type': {}, # New: Count of heartbeats, reviews etc.
             }
             for game in self.games
         }
@@ -53,14 +56,26 @@ class GameDataStore:
             m = self.metrics[gid]
             m['events_processed'] += 1
             
+            # Increment event type count
+            m['events_by_type'][etype] = m['events_by_type'].get(etype, 0) + 1
+
+            # Increment player archetype count (if present)
+            ptype = event.get('player_type')
+            if ptype:
+                m['player_archetypes'][ptype] = m['player_archetypes'].get(ptype, 0) + 1
+
             # 1. System Status (Concurrency)
             if etype == 'status':
                 m['active_users'] = event.get('player_count', 0)
             
             # 2. Financials (Revenue)
             elif etype == 'purchase':
-                m['total_revenue'] += event.get('purchase_amount', 0.0)
-                self._add_log(f"💰 PURCHASE: ${event.get('purchase_amount')} in {event.get('game_name')}")
+                amount = event.get('purchase_amount', 0.0)
+                item = event.get('item_id', 'Unknown Item')
+                m['total_revenue'] += amount
+                m['recent_purchases'].insert(0, {'item': item, 'amount': amount})
+                m['recent_purchases'] = m['recent_purchases'][:5] # Keep last 5
+                self._add_log(f"💰 PURCHASE: ${amount} for {item} in {event.get('game_name')}")
             
             # 3. Performance (Heartbeats) - Simple Exponential Moving Average
             elif etype == 'heartbeat':
@@ -128,26 +143,53 @@ def render_game_detail(game, metrics):
     
     # Top Level KPIs
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Live Players", f"{metrics['active_users']:,}", delta_color="normal")
-    k2.metric("Revenue (Session)", f"${metrics['total_revenue']:,.2f}", delta="Real-time")
-    k3.metric("Avg Latency", f"{int(metrics['avg_latency'])} ms", delta="-2ms" if metrics['avg_latency'] < 50 else "+10ms", delta_color="inverse")
-    k4.metric("Sentiment", f"{metrics['sentiment']:.2f}", delta="Stable")
+    k1.metric("Live Players", f"{metrics['active_users']:,}")
+    k2.metric("Revenue (Session)", f"${metrics['total_revenue']:,.2f}")
+    k3.metric("Avg Latency", f"{int(metrics['avg_latency'])} ms", delta_color="inverse")
+    k4.metric("Sentiment", f"{metrics['sentiment']:.2f}")
 
     st.divider()
 
-    # Real-Time Health Monitor
-    st.subheader("🟢 Real-Time Health Monitor")
-    c1, c2 = st.columns(2)
-    
+    # Detailed Analytics
+    c1, c2 = st.columns((1, 1))
+
     with c1:
-        st.info(f"**Avg FPS:** {metrics['avg_fps']:.1f}")
-        st.progress(min(1.0, metrics['avg_fps']/144.0), text="Frame Rate Stability")
-        
+        st.subheader("Player Archetypes")
+        if metrics['player_archetypes']:
+            # Create a DataFrame for the pie chart
+            archetype_df = pd.DataFrame(
+                metrics['player_archetypes'].items(), 
+                columns=['Archetype', 'Count']
+            )
+            st.bar_chart(archetype_df, x='Archetype', y='Count', color="#00aaff")
+        else:
+            st.caption("No archetype data yet.")
+
+        st.subheader("Recent Purchases")
+        if metrics['recent_purchases']:
+            purchase_df = pd.DataFrame(metrics['recent_purchases'])
+            st.dataframe(purchase_df, use_container_width=True, hide_index=True)
+        else:
+            st.caption("No purchases this session.")
+
     with c2:
+        st.subheader("Real-Time Health Monitor")
+        st.progress(min(1.0, metrics['avg_fps']/144.0), text=f"Avg. FPS: {metrics['avg_fps']:.1f}")
+        
         # Color code latency
         lat = metrics['avg_latency']
-        state = "success" if lat < 60 else "warning" if lat < 120 else "error"
-        st.metric("Network Status", "Healthy" if lat < 100 else "Congested")
+        lat_progress = min(1.0, (200 - lat) / 200) # Inverse relationship
+        st.progress(lat_progress, text=f"Avg. Latency: {lat:.0f}ms")
+
+        st.subheader("Event Stream")
+        if metrics['events_by_type']:
+            events_df = pd.DataFrame(
+                metrics['events_by_type'].items(),
+                columns=['Event Type', 'Count']
+            )
+            st.bar_chart(events_df, x='Event Type', y='Count')
+        else:
+            st.caption("Waiting for events...")
 
     # Placeholder for Spark integration
     st.warning("⚠️ Deep Analytics (Retention, LTV) require the Spark Processing Engine (Coming Soon).")
