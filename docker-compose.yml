@@ -39,6 +39,9 @@ services:
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      # Increase retention for demo purposes
+      KAFKA_LOG_RETENTION_HOURS: 24
+      KAFKA_LOG_SEGMENT_BYTES: 1073741824
 
   # 4. The Core Backend (Consumer + API)
   api:
@@ -54,7 +57,7 @@ services:
       - db
       - kafka
     volumes:
-      - ./apps/api:/app # Hot reloading for Python code
+      - ./apps/api:/app
       - ./packages/game_library:/packages/game_library
 
   # 5. The Faker Service (Producer)
@@ -84,62 +87,28 @@ services:
       - api
       - kafka
     volumes:
-      - ./apps/web:/app # Hot reloading for Streamlit
+      - ./apps/web:/app
       - ./packages/game_library:/packages/game_library
 
-# 7. Spark Master
-  spark-master:
-    image: apache/spark:3.5.0  # Official image with ARM64 support
-    hostname: spark-master
-    container_name: spark-master
-    environment:
-      - SPARK_MASTER_HOST=spark-master
-      - SPARK_MASTER_PORT=7077
-    ports:
-      - "8080:8080"
-      - "7077:7077"
-    # Apache image needs a specific command to start as Master
-    command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
-
-  # 8. Spark Worker
-  spark-worker:
-    image: apache/spark:3.5.0
-    depends_on:
-      - spark-master
-    environment:
-      - SPARK_MASTER_URL=spark://spark-master:7077
-      - SPARK_WORKER_CORES=1
-      - SPARK_WORKER_MEMORY=1G
-    volumes:
-      - ./apps/spark-processor:/app
-    # Apache image needs a specific command to start as Worker
-    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
-
-  # 9. Spark Processor Application
+  # 7. Spark Processor (Standalone Streaming Mode)
   spark-processor:
     build:
       context: .
       dockerfile: apps/spark-processor/Dockerfile
     depends_on:
-      spark-master:
-        condition: service_started
       kafka:
         condition: service_started
       db:
         condition: service_healthy
     environment:
-      - SPARK_MASTER_URL=spark://spark-master:7077
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
       - DATABASE_URL=jdbc:postgresql://db:5432/game_analytics
       - DATABASE_USER=rafay
       - DATABASE_PASSWORD=rafay
-    command: >
-      spark-submit
-      --master spark://spark-master:7077
-      --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.1,org.postgresql:postgresql:42.6.0
-      /app/main.py
+    command: python -u /app/main.py
     volumes:
-      - ./apps/spark-processor:/app # Hot reloading
+      - ./apps/spark-processor:/app
+    restart: unless-stopped
 
 volumes:
   postgres_data:

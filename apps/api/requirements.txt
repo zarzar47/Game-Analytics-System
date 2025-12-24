@@ -9,3 +9,4 @@ httpx
 aiokafka
 numpy<1.25.0
 pandas<2.0.0
+python-dateutil

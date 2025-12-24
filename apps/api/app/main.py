@@ -17,7 +17,7 @@ from dateutil import parser
 app = FastAPI(title="Game Analytics Core")
 
 # --- KAFKA CONFIG ---
-KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:29092")
 TOPIC_NAME = "GameAnalytics"
 
 # --- DATA MODELS ---
