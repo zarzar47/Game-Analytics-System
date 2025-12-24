@@ -17,8 +17,9 @@ The system is built as a **Monorepo** (Turborepo-style) using **Docker** for orc
     *   **Apache Kafka** acts as the central event bus, decoupling data producers from consumers.
     *   Ensures low-latency delivery of game events.
 *   **Data Generator (`apps/faker`)**: 
-    *   A Python service that simulates realistic game traffic (Status updates, Reviews, Purchases).
-    *   Produces events directly to Kafka topics.
+    *   **AI-Driven Simulation**: Uses **Markov Chains** to model realistic player lifecycles (Login -> Lobby -> Match -> Shop).
+    *   **Behavioral Personas**: Simulates 'Whales' (High Spend), 'Casuals' (High Churn), and 'Hardcore' (Long Sessions) users with distinct statistical properties.
+    *   Produces correlated event streams (Heartbeats, Purchases, Progression) to Kafka.
 *   **Shared Library (`packages/game_library`)**:
     *   A common Python package containing shared game definitions (IDs, Names, Cover URLs) to ensure consistency across all services.
 *   **Database**: 

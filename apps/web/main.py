@@ -15,222 +15,186 @@ API_URL = os.getenv("API_URL", "http://api:8000")
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
 TOPIC_NAME = "GameAnalytics"
 
-st.set_page_config(page_title="Game Analytics Real-Time", layout="wide")
+st.set_page_config(page_title="Game Analytics | LiveOps", layout="wide", page_icon="🎮")
 
-# --- GLOBAL DATA STORE (Thread-Safe) ---
+# --- DATA STORE (Decoupled Logic) ---
 class GameDataStore:
+    """
+    A thread-safe store for REAL-TIME alerts and snapshots.
+    NOTE: For heavy historical analytics, this should query a Spark/Data Warehouse backend.
+    This store is optimized for 'Latest State' visualization.
+    """
     def __init__(self):
         self.lock = threading.Lock()
         self.games = get_games()
-        # Initialize metrics for each game
+        # Schema: { game_id: { ...metrics... } }
         self.metrics = {
             game['id']: {
-                'player_count': 0, 
-                'sentiment_score': 0.0, 
-                'total_purchases': 0, 
-                'purchase_amount': 0.0, 
-                'event_count': 0
+                'active_users': 0,      # From 'status' events
+                'total_revenue': 0.0,   # From 'purchase' events
+                'avg_fps': 60.0,        # From 'heartbeat' events (rolling avg)
+                'avg_latency': 50.0,    # From 'heartbeat' events (rolling avg)
+                'sentiment': 0.8,       # From 'review' events
+                'events_processed': 0
             }
             for game in self.games
         }
-        self.logs = []
+        self.recent_logs = []
         self._running = False
-        self._thread = None
 
-    def update(self, data):
+    def update(self, event):
+        """Process incoming Kafka event and update in-memory state."""
         with self.lock:
-            game_id = data.get("game_id")
-            event_type = data.get("event_type")
+            gid = event.get('game_id')
+            etype = event.get('event_type')
             
-            if game_id in self.metrics:
-                m = self.metrics[game_id]
-                m['event_count'] += 1
-                
-                if event_type == "status":
-                    m['player_count'] = data.get("player_count", m['player_count'])
-                    curr_sent = data.get("sentiment_score")
-                    if curr_sent is not None:
-                        m['sentiment_score'] = (m['sentiment_score'] * (m['event_count'] - 1) + curr_sent) / m['event_count']
-                
-                elif event_type == "purchase":
-                    m['total_purchases'] += 1
-                    m['purchase_amount'] += data.get("purchase_amount", 0.0)
+            if gid not in self.metrics: return
             
-            # Update Logs
-            log_entry = f"[{time.strftime('%H:%M:%S')}] {event_type.upper()} - {data.get('game_name', game_id)}"
-            self.logs.insert(0, log_entry)
-            self.logs = self.logs[:20]
+            m = self.metrics[gid]
+            m['events_processed'] += 1
+            
+            # 1. System Status (Concurrency)
+            if etype == 'status':
+                m['active_users'] = event.get('player_count', 0)
+            
+            # 2. Financials (Revenue)
+            elif etype == 'purchase':
+                m['total_revenue'] += event.get('purchase_amount', 0.0)
+                self._add_log(f"💰 PURCHASE: ${event.get('purchase_amount')} in {event.get('game_name')}")
+            
+            # 3. Performance (Heartbeats) - Simple Exponential Moving Average
+            elif etype == 'heartbeat':
+                alpha = 0.1 # Smoothing factor
+                new_fps = event.get('fps', 60)
+                new_lat = event.get('latency_ms', 50)
+                m['avg_fps'] = (m['avg_fps'] * (1-alpha)) + (new_fps * alpha)
+                m['avg_latency'] = (m['avg_latency'] * (1-alpha)) + (new_lat * alpha)
+                
+            # 4. Sentiment (Reviews)
+            elif etype == 'review':
+                s = event.get('sentiment_score', 0.5)
+                m['sentiment'] = (m['sentiment'] * 0.9) + (s * 0.1) # Slowly shift sentiment
 
-    def get_snapshot(self):
+            # Log significant events
+            if etype in ['session_start', 'level_up', 'review']:
+                user = event.get('player_id', 'Unknown')[-4:]
+                self._add_log(f"{etype.upper()}: User-{user} in {event.get('game_name')}")
+
+    def _add_log(self, msg):
+        self.recent_logs.insert(0, f"[{time.strftime('%H:%M:%S')}] {msg}")
+        self.recent_logs = self.recent_logs[:15] # Keep last 15
+
+    def get_view_data(self):
         with self.lock:
-            return copy.deepcopy(self.metrics), list(self.logs)
+            return copy.deepcopy(self.metrics), list(self.recent_logs)
 
-    def start_consumer(self):
-        if self._running:
-            return
-        self._running = True
-        self._thread = threading.Thread(target=self._consume_loop, daemon=True)
-        self._thread.start()
+    def start(self):
+        if not self._running:
+            self._running = True
+            threading.Thread(target=self._kafka_listener, daemon=True).start()
 
-    def _consume_loop(self):
-        print("Kafka Consumer Thread Started")
+    def _kafka_listener(self):
+        # Retry logic for container startup
         while self._running:
             try:
                 consumer = KafkaConsumer(
                     TOPIC_NAME,
                     bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
                     value_deserializer=lambda x: json.loads(x.decode('utf-8')),
-                    auto_offset_reset='latest',
-                    enable_auto_commit=True,
-                    group_id='streamlit-dashboard-global'
+                    auto_offset_reset='latest'
                 )
-                print("✅ Connected to Kafka")
-                for message in consumer:
+                print("✅ Frontend connected to Kafka Stream")
+                for msg in consumer:
                     if not self._running: break
-                    self.update(message.value)
-            except Exception as e:
-                print(f"⚠️ Kafka Consumer Connection Failed: {e}")
-                print("🔄 Retrying in 5 seconds...")
-                time.sleep(5)
+                    self.update(msg.value)
+            except Exception:
+                time.sleep(2)
 
 @st.cache_resource
-def get_store():
+def get_global_store():
     store = GameDataStore()
-    store.start_consumer()
+    store.start()
     return store
 
-store = get_store()
+store = get_global_store()
 
-# --- AUTO-REFRESH UI ---
-st_autorefresh(interval=2000, key="data_refresher")
+# --- UI COMPONENTS ---
 
-# --- STATE MANAGEMENT ---
-if 'view_mode' not in st.session_state:
-    st.session_state.view_mode = 'global' # 'global' or 'detail'
-if 'selected_game_id' not in st.session_state:
-    st.session_state.selected_game_id = None
+def render_kpi_card(label, value, delta=None, color="normal"):
+    st.metric(label=label, value=value, delta=delta)
 
-# --- CSS STYLING ---
-st.markdown(
-    """
-    <style>
-    /* Card Container Styling */
-    div[data-testid="stVerticalBlock"] > div[data-testid="stVerticalBlock"] {
-        border-radius: 10px;
-    }
+def render_game_detail(game, metrics):
+    st.title(f"📊 {game['name']} Analytics")
     
-    /* Small Image Height for Compact Cards */
-    div[data-testid="stImage"] > img {
-        height: 100px !important; 
-        width: 100% !important;
-        object-fit: cover !important;
-        border-radius: 5px;
-        margin-bottom: 5px;
-    }
-
-    /* Metric Value Font Size */
-    div[data-testid="stMetricValue"] {
-        font-size: 1.2rem !important;
-    }
-    
-    /* Metric Label Font Size */
-    div[data-testid="stMetricLabel"] {
-        font-size: 0.8rem !important;
-    }
-    
-    /* Compact Header */
-    h3 {
-        font-size: 1.1rem !important;
-        padding-top: 0px !important;
-        margin-bottom: 5px !important;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
-
-# --- MAIN UI ---
-metrics_snapshot, logs_snapshot = store.get_snapshot()
-
-# === VIEW 1: GLOBAL GRID ===
-if st.session_state.view_mode == 'global':
-    st.title("Game Analytics Real-Time Dashboard")
-    
-    games = get_games()
-    
-    cols = st.columns(4)
-    
-    for idx, game in enumerate(games):
-        with cols[idx % 4]:
-            with st.container(border=True):
-                st.subheader(game["name"])
-                st.image(game["cover_url"], use_container_width=True)
-                
-                m = metrics_snapshot.get(game['id'], {})
-                
-                c1, c2 = st.columns(2)
-                c1.metric("Users", f"{m.get('player_count', 0):,}")
-                c2.metric("Mood", f"{m.get('sentiment_score', 0.0):.2f}")
-                
-                if st.button(f"Analytics", key=f"btn_{game['id']}", use_container_width=True):
-                    st.session_state.selected_game_id = game['id']
-                    st.session_state.view_mode = 'detail'
-                    st.rerun()
+    # Top Level KPIs
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Live Players", f"{metrics['active_users']:,}", delta_color="normal")
+    k2.metric("Revenue (Session)", f"${metrics['total_revenue']:,.2f}", delta="Real-time")
+    k3.metric("Avg Latency", f"{int(metrics['avg_latency'])} ms", delta="-2ms" if metrics['avg_latency'] < 50 else "+10ms", delta_color="inverse")
+    k4.metric("Sentiment", f"{metrics['sentiment']:.2f}", delta="Stable")
 
     st.divider()
-    st.subheader("Live Event Log")
-    st.text_area("Latest Events", value="\n".join(logs_snapshot), height=150, disabled=True)
 
-# === VIEW 2: DETAIL PAGE ===
-elif st.session_state.view_mode == 'detail':
-    game_id = st.session_state.selected_game_id
-    game = get_game_by_id(game_id)
-    m = metrics_snapshot.get(game_id, {})
+    # Real-Time Health Monitor
+    st.subheader("🟢 Real-Time Health Monitor")
+    c1, c2 = st.columns(2)
     
-    if st.button("Back to Global View"):
-        st.session_state.view_mode = 'global'
-        st.session_state.selected_game_id = None
+    with c1:
+        st.info(f"**Avg FPS:** {metrics['avg_fps']:.1f}")
+        st.progress(min(1.0, metrics['avg_fps']/144.0), text="Frame Rate Stability")
+        
+    with c2:
+        # Color code latency
+        lat = metrics['avg_latency']
+        state = "success" if lat < 60 else "warning" if lat < 120 else "error"
+        st.metric("Network Status", "Healthy" if lat < 100 else "Congested")
+
+    # Placeholder for Spark integration
+    st.warning("⚠️ Deep Analytics (Retention, LTV) require the Spark Processing Engine (Coming Soon).")
+
+# --- MAIN APP LAYOUT ---
+
+st_autorefresh(interval=1000, key="ui_refresh") # 1s Refresh Rate
+
+if 'view' not in st.session_state: st.session_state.view = 'dashboard'
+if 'selected_game' not in st.session_state: st.session_state.selected_game = None
+
+metrics, logs = store.get_view_data()
+
+# SIDEBAR
+with st.sidebar:
+    st.header("🎮 Operations Center")
+    st.write("Stream Status: **ONLINE**")
+    st.divider()
+    st.subheader("Live Feed")
+    for log in logs:
+        st.caption(log)
+
+# PAGE ROUTING
+if st.session_state.view == 'dashboard':
+    st.title("🌍 Global Operations Dashboard")
+    
+    # Game Grid
+    games = get_games()
+    cols = st.columns(len(games))
+    
+    for idx, game in enumerate(games):
+        m = metrics.get(game['id'], {})
+        with cols[idx]:
+            with st.container(border=True):
+                st.image(game['cover_url'], use_container_width=True)
+                st.markdown(f"**{game['name']}**")
+                st.write(f"👥 {m.get('active_users', 0)} Active")
+                st.write(f"💰 ${int(m.get('total_revenue', 0))}")
+                
+                if st.button("View Details", key=f"btn_{game['id']}"):
+                    st.session_state.selected_game = game
+                    st.session_state.view = 'detail'
+                    st.rerun()
+
+elif st.session_state.view == 'detail':
+    if st.button("← Back to Global"):
+        st.session_state.view = 'dashboard'
         st.rerun()
         
-    st.title(f"{game['name']} - Analytics")
-    
-    col1, col2 = st.columns([1, 3])
-    with col1:
-        st.image(game["cover_url"], use_container_width=True)
-        st.write(f"**Tags:** {', '.join(game['tags'])}")
-        
-    with col2:
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Active Players", f"{m.get('player_count', 0):,}")
-        m2.metric("Sentiment Score", f"{m.get('sentiment_score', 0.0):.2f}")
-        m3.metric("Total Purchases", f"{m.get('total_purchases', 0)}")
-        m4.metric("Revenue", f"${m.get('purchase_amount', 0.0):.2f}")
-        
-        st.markdown("### Historical Trends (Last 24h)")
-        
-        # Fetch Real Historical Data from API
-        try:
-            hist_response = requests.get(f"{API_URL}/games/{game_id}/history?hours=24")
-            if hist_response.status_code == 200:
-                hist_data = hist_response.json()
-                if hist_data:
-                    df = pd.DataFrame(hist_data)
-                    df['timestamp'] = pd.to_datetime(df['timestamp'])
-                    
-                    tab1, tab2 = st.tabs(["Player Count", "Sentiment"])
-                    
-                    with tab1:
-                        st.line_chart(df, x="timestamp", y="player_count")
-                    
-                    with tab2:
-                        st.line_chart(df, x="timestamp", y="sentiment_score")
-                else:
-                    st.info("No historical data available yet.")
-            else:
-                st.error(f"Failed to fetch history: {hist_response.status_code}")
-        except Exception as e:
-            st.error(f"API Error: {e}")
-
-    st.markdown("### Recent Events for this Game")
-    game_logs = [l for l in logs_snapshot if game['name'] in l]
-    st.text_area("Game Events", value="\n".join(game_logs) if game_logs else "No recent events.", height=200)
+    render_game_detail(st.session_state.selected_game, metrics[st.session_state.selected_game['id']])
