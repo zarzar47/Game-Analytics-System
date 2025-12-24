@@ -1,5 +1,11 @@
+version: '3.8'
+
 services:
-  # 1. Local Database
+  # ========================================
+  # 1. DATABASES
+  # ========================================
+  
+  # PostgreSQL (Warm Storage - Analytics)
   db:
     image: postgres:15-alpine
     restart: always
@@ -17,15 +23,76 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./apps/spark-processor/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./sql/star_schema.sql:/docker-entrypoint-initdb.d/02_star_schema.sql
+    networks:
+      - game_analytics_net
 
-  # 2. Zookeeper
+  # MongoDB (Hot Storage - Real-time Data)
+  mongo:
+    image: mongo:7.0
+    restart: always
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: admin
+      MONGO_INITDB_DATABASE: game_analytics
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+      - ./mongo-init:/docker-entrypoint-initdb.d
+    networks:
+      - game_analytics_net
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/game_analytics --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Hadoop Namenode (Cold Archive)
+  namenode:
+    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+    container_name: namenode
+    restart: always
+    ports:
+      - "9870:9870"
+      - "9000:9000"
+    volumes:
+      - hadoop_namenode:/hadoop/dfs/name
+    environment:
+      - CLUSTER_NAME=game_analytics_cluster
+    env_file:
+      - ./hadoop.env
+    networks:
+      - game_analytics_net
+
+  # Hadoop Datanode
+  datanode:
+    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    container_name: datanode
+    restart: always
+    volumes:
+      - hadoop_datanode:/hadoop/dfs/data
+    environment:
+      SERVICE_PRECONDITION: "namenode:9870"
+    env_file:
+      - ./hadoop.env
+    networks:
+      - game_analytics_net
+    depends_on:
+      - namenode
+
+  # ========================================
+  # 2. STREAMING & MESSAGING
+  # ========================================
+  
   zookeeper:
     image: confluentinc/cp-zookeeper:7.4.0
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - game_analytics_net
 
-  # 3. Kafka Broker
   kafka:
     image: confluentinc/cp-kafka:7.4.0
     depends_on:
@@ -39,11 +106,69 @@ services:
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      # Increase retention for demo purposes
       KAFKA_LOG_RETENTION_HOURS: 24
       KAFKA_LOG_SEGMENT_BYTES: 1073741824
+    networks:
+      - game_analytics_net
 
-  # 4. The Core Backend (Consumer + API)
+  # ========================================
+  # 3. ORCHESTRATION (AIRFLOW)
+  # ========================================
+  
+  airflow-webserver:
+    image: apache/airflow:2.7.0-python3.11
+    restart: always
+    depends_on:
+      - db
+      - mongo
+      - kafka
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://rafay:rafay@db:5432/airflow
+      - AIRFLOW__CORE__FERNET_KEY=FB0o_zt4e3Ziq3LdUUO7F2Z95cvFFx16hU8jTeR1ASM=
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - AIRFLOW__API__AUTH_BACKENDS=airflow.api.auth.backend.basic_auth
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+      - ./packages/game_library:/packages/game_library
+    ports:
+      - "8080:8080"
+    command: >
+      bash -c "airflow db init &&
+               airflow users create --username admin --firstname Admin --lastname User --role Admin --email admin@example.com --password admin &&
+               airflow webserver"
+    networks:
+      - game_analytics_net
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  airflow-scheduler:
+    image: apache/airflow:2.7.0-python3.11
+    restart: always
+    depends_on:
+      - airflow-webserver
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://rafay:rafay@db:5432/airflow
+      - AIRFLOW__CORE__FERNET_KEY=FB0o_zt4e3Ziq3LdUUO7F2Z95cvFFx16hU8jTeR1ASM=
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+    command: airflow scheduler
+    networks:
+      - game_analytics_net
+
+  # ========================================
+  # 4. APPLICATION SERVICES
+  # ========================================
+  
+  # FastAPI Backend
   api:
     build: 
       context: .
@@ -52,28 +177,36 @@ services:
       - "8000:8000"
     environment:
       - DATABASE_URL=postgresql+asyncpg://rafay:rafay@db:5432/game_analytics
+      - MONGODB_URL=mongodb://admin:admin@mongo:27017/game_analytics?authSource=admin
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
     depends_on:
       - db
+      - mongo
       - kafka
     volumes:
       - ./apps/api:/app
       - ./packages/game_library:/packages/game_library
+    networks:
+      - game_analytics_net
 
-  # 5. The Faker Service (Producer)
+  # Data Generator
   faker:
     build: 
       context: .
       dockerfile: apps/faker/Dockerfile
     environment:
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - MONGODB_URL=mongodb://admin:admin@mongo:27017/game_analytics?authSource=admin
     depends_on:
       - kafka
+      - mongo
     volumes:
       - ./apps/faker:/app
       - ./packages/game_library:/packages/game_library
+    networks:
+      - game_analytics_net
 
-  # 6. The Frontend Dashboard (Streamlit Consumer)
+  # Streamlit Dashboard
   web:
     build: 
       context: .
@@ -89,8 +222,10 @@ services:
     volumes:
       - ./apps/web:/app
       - ./packages/game_library:/packages/game_library
+    networks:
+      - game_analytics_net
 
-  # 7. Spark Processor (Standalone Streaming Mode)
+  # Spark Processor
   spark-processor:
     build:
       context: .
@@ -100,15 +235,27 @@ services:
         condition: service_started
       db:
         condition: service_healthy
+      mongo:
+        condition: service_healthy
     environment:
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
       - DATABASE_URL=jdbc:postgresql://db:5432/game_analytics
       - DATABASE_USER=rafay
       - DATABASE_PASSWORD=rafay
+      - MONGODB_URL=mongodb://admin:admin@mongo:27017/game_analytics?authSource=admin
     command: python -u /app/main.py
     volumes:
       - ./apps/spark-processor:/app
     restart: unless-stopped
+    networks:
+      - game_analytics_net
 
 volumes:
   postgres_data:
+  mongo_data:
+  hadoop_namenode:
+  hadoop_datanode:
+
+networks:
+  game_analytics_net:
+    driver: bridge
