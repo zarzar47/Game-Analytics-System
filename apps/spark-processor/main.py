@@ -3,7 +3,7 @@ import time
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import (
     from_json, col, window, sum, avg, approx_count_distinct, 
-    to_timestamp, lower, current_timestamp
+    to_timestamp, lower, current_timestamp, expr
 )
 from pyspark.sql.types import StructType, StructField, StringType, DoubleType, IntegerType
 
@@ -18,7 +18,7 @@ POSTGRES_PASSWORD = os.getenv("DATABASE_PASSWORD", "rafay")
 # --- SCHEMA DEFINITION ---
 EVENT_SCHEMA = StructType([
     StructField("event_id", StringType(), True),
-    StructField("timestamp", StringType(), True),  # ISO format
+    StructField("timestamp", StringType(), True),
     StructField("event_type", StringType(), True),
     StructField("game_id", StringType(), True),
     StructField("game_name", StringType(), True),
@@ -37,90 +37,73 @@ EVENT_SCHEMA = StructType([
 ])
 
 def get_spark_session():
-    """Create Spark session with Kafka + JDBC support"""
     print("🔧 Creating Spark Session...")
     spark = (
         SparkSession.builder
         .appName("GameAnalyticsStreamProcessor")
-        .master("local[4]")  # 4 threads for parallel processing
+        .master("local[4]")
         .config("spark.jars.packages", 
                 "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,"
                 "org.postgresql:postgresql:42.6.0")
         .config("spark.sql.shuffle.partitions", "4")
         .config("spark.streaming.stopGracefullyOnShutdown", "true")
-        .config("spark.sql.streaming.schemaInference", "true")
         .getOrCreate()
     )
     spark.sparkContext.setLogLevel("WARN")
-    print("✅ Spark Session Created")
+    print("✅ Spark Session Created\n")
     return spark
 
-def wait_for_kafka():
-    """Wait for Kafka to be ready"""
-    from kafka import KafkaAdminClient
-    from kafka.errors import NoBrokersAvailable
-    
-    print("⏳ Waiting for Kafka to be ready...")
-    max_retries = 30
-    retry_count = 0
-    
-    while retry_count < max_retries:
-        try:
-            admin = KafkaAdminClient(
-                bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
-                request_timeout_ms=5000
-            )
-            topics = admin.list_topics()
-            if KAFKA_TOPIC in topics:
-                print(f"✅ Kafka is ready. Topic '{KAFKA_TOPIC}' exists.")
-                admin.close()
-                return True
-            else:
-                print(f"⏳ Topic '{KAFKA_TOPIC}' not yet created, waiting...")
-                time.sleep(2)
-        except NoBrokersAvailable:
-            retry_count += 1
-            print(f"⏳ Kafka not ready, retrying... ({retry_count}/{max_retries})")
-            time.sleep(2)
-        except Exception as e:
-            print(f"⚠️ Error checking Kafka: {e}")
-            time.sleep(2)
-    
-    print("⚠️ Proceeding anyway, Kafka might be ready...")
-    return False
+def debug_raw_kafka(df, epoch_id):
+    """Debug: Show raw Kafka messages"""
+    print(f"\n🔍 DEBUG BATCH {epoch_id}: RAW KAFKA MESSAGES")
+    print("=" * 80)
+    count = df.count()
+    print(f"Total messages in batch: {count}")
+    if count > 0:
+        df.show(5, truncate=False)
+    else:
+        print("⚠️ NO MESSAGES IN KAFKA STREAM!")
+    print("=" * 80 + "\n")
 
-def create_kafka_read_stream(spark, kafka_servers, topic):
-    """Create a streaming DataFrame from Kafka"""
-    print(f"📡 Connecting to Kafka: {kafka_servers}")
-    print(f"📋 Subscribing to topic: {topic}")
-    
-    return (
-        spark.readStream
-        .format("kafka")
-        .option("kafka.bootstrap.servers", kafka_servers)
-        .option("subscribe", topic)
-        .option("startingOffsets", "earliest")  # Read all historical data
-        .option("failOnDataLoss", "false")
-        .option("maxOffsetsPerTrigger", "1000")  # Process in batches
-        # CRITICAL: Use different consumer group from API
-        .option("kafka.group.id", "spark-analytics-consumer")
-        .load()
-    )
+def debug_parsed_events(df, epoch_id):
+    """Debug: Show parsed events with timestamps"""
+    print(f"\n🔍 DEBUG BATCH {epoch_id}: PARSED EVENTS")
+    print("=" * 80)
+    count = df.count()
+    print(f"Total parsed events: {count}")
+    if count > 0:
+        df.select("event_type", "game_name", "timestamp", "player_id").show(5, truncate=False)
+        
+        # Check for NULL timestamps
+        null_count = df.filter(col("timestamp").isNull()).count()
+        if null_count > 0:
+            print(f"⚠️ WARNING: {null_count} events have NULL timestamps!")
+            df.filter(col("timestamp").isNull()).select("event_type", "timestamp").show(3)
+    else:
+        print("⚠️ NO EVENTS AFTER PARSING!")
+    print("=" * 80 + "\n")
+
+def debug_filtered_events(df, epoch_id, event_type):
+    """Debug: Show filtered events for specific analytics"""
+    print(f"\n🔍 DEBUG BATCH {epoch_id}: FILTERED {event_type.upper()} EVENTS")
+    print("=" * 80)
+    count = df.count()
+    print(f"Total {event_type} events: {count}")
+    if count > 0:
+        df.show(3, truncate=False)
+    else:
+        print(f"⚠️ NO {event_type.upper()} EVENTS FOUND!")
+    print("=" * 80 + "\n")
 
 def write_to_postgres(df, epoch_id, table_name):
-    """Write batch to PostgreSQL with error handling"""
     try:
         row_count = df.count()
         timestamp = time.strftime('%H:%M:%S')
         
         if row_count > 0:
-            print(f"✅ [{timestamp}] Batch {epoch_id} for {table_name}: {row_count} rows")
-            
-            # Show sample
-            print(f"📊 Sample from {table_name}:")
+            print(f"✅ [{timestamp}] Writing {row_count} rows to {table_name}")
             df.show(2, truncate=False)
             
-            # Write to database
             (
                 df.write
                 .format("jdbc")
@@ -132,209 +115,116 @@ def write_to_postgres(df, epoch_id, table_name):
                 .mode("append")
                 .save()
             )
-            print(f"✅ Successfully wrote {row_count} rows to {table_name}\n")
+            print(f"✅ Successfully wrote to {table_name}\n")
         else:
-            print(f"⏳ [{timestamp}] Batch {epoch_id} for {table_name}: 0 rows (waiting for watermark)\n")
+            print(f"⏳ [{timestamp}] No rows for {table_name} (watermark delay)\n")
             
     except Exception as e:
-        print(f"❌ ERROR in batch {epoch_id} for {table_name}:")
-        print(f"   {str(e)}\n")
+        print(f"❌ ERROR writing to {table_name}: {e}\n")
         import traceback
         traceback.print_exc()
 
-# --- ANALYTICS STREAMS ---
-
-def process_revenue(events_df):
-    """Revenue analytics from purchase events"""
-    print("💰 Setting up Revenue Stream...")
-    
-    revenue_df = (
-        events_df
-        .filter(lower(col("event_type")) == "purchase")
-        .filter(col("purchase_amount").isNotNull())
-        .filter(col("player_type").isNotNull())
-        .filter(col("game_name").isNotNull())
-        .withWatermark("timestamp", "30 seconds")
-        .groupBy(
-            window("timestamp", "1 minute").alias("time_window"),
-            "game_name",
-            "player_type"
-        )
-        .agg(
-            sum("purchase_amount").alias("total_revenue"),
-            avg("purchase_amount").alias("avg_purchase"),
-            approx_count_distinct("player_id").alias("unique_purchasers")
-        )
-        .select(
-            col("time_window.start").alias("window_start"),
-            col("time_window.end").alias("window_end"),
-            "game_name",
-            "player_type",
-            "total_revenue",
-            "avg_purchase",
-            "unique_purchasers"
-        )
-    )
-    
-    query = (
-        revenue_df.writeStream
-        .foreachBatch(lambda df, epoch_id: write_to_postgres(df, epoch_id, "realtime_revenue"))
-        .outputMode("append")
-        .option("checkpointLocation", "/tmp/spark-checkpoints/revenue")
-        .trigger(processingTime="15 seconds")
-        .start()
-    )
-    
-    print("✅ Revenue Stream Started")
-    return query
-
-def process_concurrency(events_df):
-    """Player concurrency from heartbeat events"""
-    print("👥 Setting up Concurrency Stream...")
-    
-    concurrency_df = (
-        events_df
-        .filter(lower(col("event_type")) == "heartbeat")
-        .filter(col("player_id").isNotNull())
-        .filter(col("region").isNotNull())
-        .filter(col("game_name").isNotNull())
-        .withWatermark("timestamp", "1 minute")
-        .groupBy(
-            window("timestamp", "1 minute", "30 seconds").alias("time_window"),
-            "game_name",
-            "region"
-        )
-        .agg(approx_count_distinct("player_id").alias("concurrent_players"))
-        .select(
-            col("time_window.start").alias("window_start"),
-            col("time_window.end").alias("window_end"),
-            "game_name",
-            "region",
-            "concurrent_players"
-        )
-    )
-    
-    query = (
-        concurrency_df.writeStream
-        .foreachBatch(lambda df, epoch_id: write_to_postgres(df, epoch_id, "realtime_concurrency"))
-        .outputMode("append")
-        .option("checkpointLocation", "/tmp/spark-checkpoints/concurrency")
-        .trigger(processingTime="15 seconds")
-        .start()
-    )
-    
-    print("✅ Concurrency Stream Started")
-    return query
-
-def process_performance(events_df):
-    """Performance metrics from heartbeat events"""
-    print("⚡ Setting up Performance Stream...")
-    
-    performance_df = (
-        events_df
-        .filter(lower(col("event_type")) == "heartbeat")
-        .filter(col("fps").isNotNull())
-        .filter(col("latency_ms").isNotNull())
-        .filter(col("platform").isNotNull())
-        .filter(col("region").isNotNull())
-        .filter(col("game_name").isNotNull())
-        .withWatermark("timestamp", "30 seconds")
-        .groupBy(
-            window("timestamp", "1 minute").alias("time_window"),
-            "game_name",
-            "platform",
-            "region"
-        )
-        .agg(
-            avg("fps").alias("avg_fps"),
-            avg("latency_ms").alias("avg_latency")
-        )
-        .select(
-            col("time_window.start").alias("window_start"),
-            col("time_window.end").alias("window_end"),
-            "game_name",
-            "platform",
-            "region",
-            "avg_fps",
-            "avg_latency"
-        )
-    )
-    
-    query = (
-        performance_df.writeStream
-        .foreachBatch(lambda df, epoch_id: write_to_postgres(df, epoch_id, "realtime_performance"))
-        .outputMode("append")
-        .option("checkpointLocation", "/tmp/spark-checkpoints/performance")
-        .trigger(processingTime="15 seconds")
-        .start()
-    )
-    
-    print("✅ Performance Stream Started")
-    return query
-
-# --- MAIN EXECUTION ---
 if __name__ == "__main__":
     print("=" * 80)
-    print("🚀 GAME ANALYTICS SPARK STREAMING PROCESSOR")
+    print("🐛 SPARK STREAMING DEBUG MODE")
     print("=" * 80)
-    print()
+    print("This will show you EXACTLY what Spark is reading from Kafka\n")
     
-    # Wait for dependencies
-    wait_for_kafka()
-    
-    # Create Spark session
     spark = get_spark_session()
     
-    print("\n📡 CONNECTING TO KAFKA STREAM")
-    print("-" * 80)
-    
     # Read from Kafka
-    kafka_stream_df = create_kafka_read_stream(spark, KAFKA_BOOTSTRAP_SERVERS, KAFKA_TOPIC)
+    print(f"📡 Reading from Kafka: {KAFKA_BOOTSTRAP_SERVERS}, topic: {KAFKA_TOPIC}\n")
+    kafka_df = (
+        spark.readStream
+        .format("kafka")
+        .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP_SERVERS)
+        .option("subscribe", KAFKA_TOPIC)
+        .option("startingOffsets", "earliest")
+        .option("failOnDataLoss", "false")
+        .load()
+    )
     
-    # Parse JSON events
-    print("🔧 Parsing JSON events from Kafka...")
+    # STEP 1: Debug raw Kafka messages
+    print("🔍 STEP 1: Checking raw Kafka stream...\n")
+    raw_debug = (
+        kafka_df
+        .selectExpr("CAST(key AS STRING)", "CAST(value AS STRING)", "timestamp", "partition", "offset")
+        .writeStream
+        .foreachBatch(debug_raw_kafka)
+        .outputMode("append")
+        .trigger(processingTime="10 seconds")
+        .start()
+    )
+    
+    # Wait a bit for first batch
+    time.sleep(15)
+    
+    # STEP 2: Parse and check events
+    print("\n🔍 STEP 2: Parsing JSON events...\n")
     events_df = (
-        kafka_stream_df
+        kafka_df
         .selectExpr("CAST(value AS STRING) as json")
         .select(from_json(col("json"), EVENT_SCHEMA).alias("data"))
         .select("data.*")
-    )
-    
-    # Convert timestamp from ISO string to timestamp type
-    print("⏰ Converting timestamps...")
-    events_df = (
-        events_df
         .withColumn("timestamp", to_timestamp(col("timestamp")))
-        .filter(col("timestamp").isNotNull())
     )
     
-    print("✅ Event parsing configured")
+    parsed_debug = (
+        events_df
+        .writeStream
+        .foreachBatch(debug_parsed_events)
+        .outputMode("append")
+        .trigger(processingTime="10 seconds")
+        .start()
+    )
     
-    print("\n🔥 STARTING ANALYTICS STREAMS")
-    print("-" * 80)
+    # Wait for another batch
+    time.sleep(15)
     
-    # Start all three analytics streams
-    query_revenue = process_revenue(events_df)
-    query_concurrency = process_concurrency(events_df)
-    query_performance = process_performance(events_df)
+    # STEP 3: Check specific event types
+    print("\n🔍 STEP 3: Checking purchase events...\n")
+    purchase_df = events_df.filter(lower(col("event_type")) == "purchase")
+    
+    purchase_debug = (
+        purchase_df
+        .writeStream
+        .foreachBatch(lambda df, epoch: debug_filtered_events(df, epoch, "purchase"))
+        .outputMode("append")
+        .trigger(processingTime="10 seconds")
+        .start()
+    )
+    
+    time.sleep(15)
+    
+    print("\n🔍 STEP 4: Checking heartbeat events...\n")
+    heartbeat_df = events_df.filter(lower(col("event_type")) == "heartbeat")
+    
+    heartbeat_debug = (
+        heartbeat_df
+        .writeStream
+        .foreachBatch(lambda df, epoch: debug_filtered_events(df, epoch, "heartbeat"))
+        .outputMode("append")
+        .trigger(processingTime="10 seconds")
+        .start()
+    )
     
     print("\n" + "=" * 80)
-    print("✅ ALL STREAMS RUNNING")
+    print("🐛 DEBUG MODE RUNNING")
     print("=" * 80)
-    print(f"📊 Kafka Topic: {KAFKA_TOPIC}")
-    print(f"📊 Kafka Servers: {KAFKA_BOOTSTRAP_SERVERS}")
-    print(f"📊 Database: {POSTGRES_URL}")
-    print(f"📊 Consumer Group: spark-analytics-consumer")
+    print("Watch the output above to see:")
+    print("  1. Are messages being read from Kafka?")
+    print("  2. Are they being parsed correctly?")
+    print("  3. Are timestamps NULL?")
+    print("  4. Are event_type filters working?")
     print("=" * 80)
-    print("\n⏳ Processing events (CTRL+C to stop)...\n")
+    print("\nPress CTRL+C when you have enough debug info...\n")
     
-    # Wait for termination
     try:
         spark.streams.awaitAnyTermination()
     except KeyboardInterrupt:
-        print("\n🛑 Shutting down gracefully...")
-        query_revenue.stop()
-        query_concurrency.stop()
-        query_performance.stop()
+        print("\n🛑 Stopping debug mode...")
+        raw_debug.stop()
+        parsed_debug.stop()
+        purchase_debug.stop()
+        heartbeat_debug.stop()
         spark.stop()
-        print("✅ Shutdown complete")
