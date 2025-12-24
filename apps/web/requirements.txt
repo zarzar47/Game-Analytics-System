@@ -6,3 +6,5 @@ plotly
 watchdog
 kafka-python
 streamlit-autorefresh
+psycopg2-binary
+SQLAlchemy
