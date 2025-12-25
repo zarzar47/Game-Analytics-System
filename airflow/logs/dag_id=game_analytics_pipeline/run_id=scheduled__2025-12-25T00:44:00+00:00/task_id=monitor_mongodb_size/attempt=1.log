@@ -1,0 +1,16 @@
+[2025-12-25T00:45:01.241+0000] {taskinstance.py:1159} INFO - Dependencies all met for dep_context=non-requeueable deps ti=<TaskInstance: game_analytics_pipeline.monitor_mongodb_size scheduled__2025-12-25T00:44:00+00:00 [queued]>
+[2025-12-25T00:45:01.251+0000] {taskinstance.py:1159} INFO - Dependencies all met for dep_context=requeueable deps ti=<TaskInstance: game_analytics_pipeline.monitor_mongodb_size scheduled__2025-12-25T00:44:00+00:00 [queued]>
+[2025-12-25T00:45:01.251+0000] {taskinstance.py:1361} INFO - Starting attempt 1 of 3
+[2025-12-25T00:45:01.265+0000] {taskinstance.py:1382} INFO - Executing <Task(PythonOperator): monitor_mongodb_size> on 2025-12-25 00:44:00+00:00
+[2025-12-25T00:45:01.274+0000] {standard_task_runner.py:57} INFO - Started process 673 to run task
+[2025-12-25T00:45:01.278+0000] {standard_task_runner.py:84} INFO - Running: ['airflow', 'tasks', 'run', 'game_analytics_pipeline', 'monitor_mongodb_size', 'scheduled__2025-12-25T00:44:00+00:00', '--job-id', '85', '--raw', '--subdir', 'DAGS_FOLDER/game_analytics_dag.py', '--cfg-path', '/tmp/tmpq0yxihqv']
+[2025-12-25T00:45:01.281+0000] {standard_task_runner.py:85} INFO - Job 85: Subtask monitor_mongodb_size
+[2025-12-25T00:45:01.387+0000] {task_command.py:415} INFO - Running <TaskInstance: game_analytics_pipeline.monitor_mongodb_size scheduled__2025-12-25T00:44:00+00:00 [running]> on host e8498d52dcd6
+[2025-12-25T00:45:01.553+0000] {taskinstance.py:1660} INFO - Exporting env vars: AIRFLOW_CTX_DAG_OWNER='game_analytics_team' AIRFLOW_CTX_DAG_ID='game_analytics_pipeline' AIRFLOW_CTX_TASK_ID='monitor_mongodb_size' AIRFLOW_CTX_EXECUTION_DATE='2025-12-25T00:44:00+00:00' AIRFLOW_CTX_TRY_NUMBER='1' AIRFLOW_CTX_DAG_RUN_ID='scheduled__2025-12-25T00:44:00+00:00'
+[2025-12-25T00:45:01.596+0000] {base.py:73} INFO - Using connection ID 'mongo_default' for task execution.
+[2025-12-25T00:45:01.626+0000] {game_analytics_dag.py:60} INFO - MongoDB Size: 0.02 MB
+[2025-12-25T00:45:01.656+0000] {game_analytics_dag.py:71} INFO - Size within limits. No archival needed.
+[2025-12-25T00:45:01.681+0000] {python.py:194} INFO - Done. Returned value was: continue_pipeline
+[2025-12-25T00:45:01.734+0000] {taskinstance.py:1400} INFO - Marking task as SUCCESS. dag_id=game_analytics_pipeline, task_id=monitor_mongodb_size, execution_date=20251225T004400, start_date=20251225T004501, end_date=20251225T004501
+[2025-12-25T00:45:01.771+0000] {local_task_job_runner.py:228} INFO - Task exited with return code 0
+[2025-12-25T00:45:01.885+0000] {taskinstance.py:2784} INFO - 2 downstream tasks scheduled from follow-on schedule check
