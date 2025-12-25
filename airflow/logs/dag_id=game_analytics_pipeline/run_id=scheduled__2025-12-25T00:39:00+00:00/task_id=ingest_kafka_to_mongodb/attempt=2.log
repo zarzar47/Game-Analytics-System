@@ -1,0 +1,70 @@
+[2025-12-25T00:45:09.256+0000] {taskinstance.py:1159} INFO - Dependencies all met for dep_context=non-requeueable deps ti=<TaskInstance: game_analytics_pipeline.ingest_kafka_to_mongodb scheduled__2025-12-25T00:39:00+00:00 [queued]>
+[2025-12-25T00:45:09.268+0000] {taskinstance.py:1159} INFO - Dependencies all met for dep_context=requeueable deps ti=<TaskInstance: game_analytics_pipeline.ingest_kafka_to_mongodb scheduled__2025-12-25T00:39:00+00:00 [queued]>
+[2025-12-25T00:45:09.269+0000] {taskinstance.py:1361} INFO - Starting attempt 2 of 3
+[2025-12-25T00:45:09.288+0000] {taskinstance.py:1382} INFO - Executing <Task(PythonOperator): ingest_kafka_to_mongodb> on 2025-12-25 00:39:00+00:00
+[2025-12-25T00:45:09.296+0000] {standard_task_runner.py:57} INFO - Started process 684 to run task
+[2025-12-25T00:45:09.301+0000] {standard_task_runner.py:84} INFO - Running: ['airflow', 'tasks', 'run', 'game_analytics_pipeline', 'ingest_kafka_to_mongodb', 'scheduled__2025-12-25T00:39:00+00:00', '--job-id', '88', '--raw', '--subdir', 'DAGS_FOLDER/game_analytics_dag.py', '--cfg-path', '/tmp/tmp5bno8b4c']
+[2025-12-25T00:45:09.305+0000] {standard_task_runner.py:85} INFO - Job 88: Subtask ingest_kafka_to_mongodb
+[2025-12-25T00:45:09.398+0000] {task_command.py:415} INFO - Running <TaskInstance: game_analytics_pipeline.ingest_kafka_to_mongodb scheduled__2025-12-25T00:39:00+00:00 [running]> on host e8498d52dcd6
+[2025-12-25T00:45:09.555+0000] {taskinstance.py:1660} INFO - Exporting env vars: AIRFLOW_CTX_DAG_OWNER='game_analytics_team' AIRFLOW_CTX_DAG_ID='game_analytics_pipeline' AIRFLOW_CTX_TASK_ID='ingest_kafka_to_mongodb' AIRFLOW_CTX_EXECUTION_DATE='2025-12-25T00:39:00+00:00' AIRFLOW_CTX_TRY_NUMBER='2' AIRFLOW_CTX_DAG_RUN_ID='scheduled__2025-12-25T00:39:00+00:00'
+[2025-12-25T00:45:09.755+0000] {base.py:73} INFO - Using connection ID 'mongo_default' for task execution.
+[2025-12-25T00:45:09.768+0000] {conn.py:400} INFO - <BrokerConnection client_id=kafka-python-2.3.0, node_id=bootstrap-0 host=kafka:29092 <connecting> [IPv4 ('172.31.0.6', 29092)]>: connecting to kafka:29092 [('172.31.0.6', 29092) IPv4]
+[2025-12-25T00:45:09.777+0000] {conn.py:622} INFO - <BrokerConnection client_id=kafka-python-2.3.0, node_id=bootstrap-0 host=kafka:29092 <checking_api_versions_recv> [IPv4 ('172.31.0.6', 29092)]>: Broker version identified as 2.6
+[2025-12-25T00:45:09.777+0000] {conn.py:461} INFO - <BrokerConnection client_id=kafka-python-2.3.0, node_id=bootstrap-0 host=kafka:29092 <connected> [IPv4 ('172.31.0.6', 29092)]>: Connection complete.
+[2025-12-25T00:45:09.779+0000] {subscription_state.py:181} INFO - Updating subscribed topics to: ('GameAnalytics',)
+[2025-12-25T00:45:09.782+0000] {conn.py:400} INFO - <BrokerConnection client_id=kafka-python-2.3.0, node_id=1 host=kafka:29092 <connecting> [IPv4 ('172.31.0.6', 29092)]>: connecting to kafka:29092 [('172.31.0.6', 29092) IPv4]
+[2025-12-25T00:45:09.783+0000] {conn.py:461} INFO - <BrokerConnection client_id=kafka-python-2.3.0, node_id=1 host=kafka:29092 <connected> [IPv4 ('172.31.0.6', 29092)]>: Connection complete.
+[2025-12-25T00:45:09.783+0000] {conn.py:951} INFO - <BrokerConnection client_id=kafka-python-2.3.0, node_id=bootstrap-0 host=kafka:29092 <connected> [IPv4 ('172.31.0.6', 29092)]>: Closing connection. 
+[2025-12-25T00:45:09.887+0000] {cluster.py:403} INFO - Coordinator for group/airflow_ingestion_v2 is ('coordinator-1', 'kafka', 29092, None)
+[2025-12-25T00:45:09.887+0000] {base.py:835} INFO - Discovered coordinator coordinator-1 for group airflow_ingestion_v2
+[2025-12-25T00:45:09.887+0000] {base.py:895} INFO - Starting new heartbeat thread
+[2025-12-25T00:45:09.889+0000] {consumer.py:379} INFO - Revoking previously assigned partitions () for group airflow_ingestion_v2
+[2025-12-25T00:45:09.890+0000] {base.py:433} INFO - Failed to join group airflow_ingestion_v2: NodeNotReadyError: coordinator-1
+[2025-12-25T00:45:09.892+0000] {conn.py:400} INFO - <BrokerConnection client_id=kafka-python-2.3.0, node_id=coordinator-1 host=kafka:29092 <connecting> [IPv4 ('172.31.0.6', 29092)]>: connecting to kafka:29092 [('172.31.0.6', 29092) IPv4]
+[2025-12-25T00:45:09.893+0000] {conn.py:461} INFO - <BrokerConnection client_id=kafka-python-2.3.0, node_id=coordinator-1 host=kafka:29092 <connected> [IPv4 ('172.31.0.6', 29092)]>: Connection complete.
+[2025-12-25T00:45:09.994+0000] {base.py:546} INFO - (Re-)joining group airflow_ingestion_v2
+[2025-12-25T00:45:09.998+0000] {base.py:661} INFO - Received member id kafka-python-2.3.0-c224d719-b093-448b-aced-18fc27dc3b27 for group airflow_ingestion_v2; will retry join-group
+[2025-12-25T00:45:09.999+0000] {base.py:433} INFO - Failed to join group airflow_ingestion_v2: [Error 79] MemberIdRequiredError
+[2025-12-25T00:45:09.999+0000] {base.py:546} INFO - (Re-)joining group airflow_ingestion_v2
+[2025-12-25T00:45:14.782+0000] {base.py:1130} INFO - Stopping heartbeat thread
+[2025-12-25T00:45:14.783+0000] {base.py:943} INFO - Leaving consumer group airflow_ingestion_v2 (member kafka-python-2.3.0-c224d719-b093-448b-aced-18fc27dc3b27).
+[2025-12-25T00:45:15.877+0000] {local_task_job_runner.py:115} ERROR - Received SIGTERM. Terminating subprocesses
+[2025-12-25T00:45:15.900+0000] {process_utils.py:131} INFO - Sending 15 to group 684. PIDs of all processes in the group: [684]
+[2025-12-25T00:45:15.902+0000] {process_utils.py:86} INFO - Sending the signal 15 to group 684
+[2025-12-25T00:45:15.907+0000] {taskinstance.py:1632} ERROR - Received SIGTERM. Terminating subprocesses.
+[2025-12-25T00:45:15.987+0000] {taskinstance.py:1943} ERROR - Task failed with exception
+Traceback (most recent call last):
+  File "/home/airflow/.local/lib/python3.11/site-packages/airflow/operators/python.py", line 192, in execute
+    return_value = self.execute_callable()
+                   ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/airflow/.local/lib/python3.11/site-packages/airflow/operators/python.py", line 209, in execute_callable
+    return self.python_callable(*self.op_args, **self.op_kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/airflow/dags/game_analytics_dag.py", line 198, in ingest_kafka_to_mongo
+    consumer.close()
+  File "/home/airflow/.local/lib/python3.11/site-packages/kafka/consumer/group.py", line 519, in close
+    self._coordinator.close(autocommit=autocommit, timeout_ms=timeout_ms)
+  File "/home/airflow/.local/lib/python3.11/site-packages/kafka/coordinator/consumer.py", line 488, in close
+    super(ConsumerCoordinator, self).close(timeout_ms=timeout_ms)
+  File "/home/airflow/.local/lib/python3.11/site-packages/kafka/coordinator/base.py", line 925, in close
+    self.maybe_leave_group(timeout_ms=timeout_ms)
+  File "/home/airflow/.local/lib/python3.11/site-packages/kafka/coordinator/base.py", line 953, in maybe_leave_group
+    self._client.poll(future=future, timeout_ms=timeout_ms)
+  File "/home/airflow/.local/lib/python3.11/site-packages/kafka/client_async.py", line 685, in poll
+    self._poll(timeout / 1000)
+  File "/home/airflow/.local/lib/python3.11/site-packages/kafka/client_async.py", line 728, in _poll
+    ready = self._selector.select(timeout)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/selectors.py", line 468, in select
+    fd_event_list = self._selector.poll(timeout, max_ev)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/airflow/.local/lib/python3.11/site-packages/airflow/models/taskinstance.py", line 1634, in signal_handler
+    raise AirflowException("Task received SIGTERM signal")
+airflow.exceptions.AirflowException: Task received SIGTERM signal
+[2025-12-25T00:45:16.014+0000] {taskinstance.py:1400} INFO - Marking task as UP_FOR_RETRY. dag_id=game_analytics_pipeline, task_id=ingest_kafka_to_mongodb, execution_date=20251225T003900, start_date=20251225T004509, end_date=20251225T004516
+[2025-12-25T00:45:17.118+0000] {standard_task_runner.py:104} ERROR - Failed to execute job 88 for task ingest_kafka_to_mongodb (Task received SIGTERM signal; 684)
+[2025-12-25T00:45:17.162+0000] {process_utils.py:79} INFO - Process psutil.Process(pid=684, status='terminated', exitcode=1, started='00:45:08') (684) terminated with exit code 1
+[2025-12-25T00:45:17.162+0000] {local_task_job_runner.py:228} INFO - Task exited with return code 143
+[2025-12-25T00:45:17.218+0000] {taskinstance.py:2784} INFO - 0 downstream tasks scheduled from follow-on schedule check
+[2025-12-25T00:45:18.106+0000] {local_task_job_runner.py:115} ERROR - Received SIGTERM. Terminating subprocesses
+[2025-12-25T00:45:18.107+0000] {local_task_job_runner.py:228} INFO - Task exited with return code 143
