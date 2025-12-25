@@ -199,7 +199,7 @@ class MarkovPlayer:
             "event_id": str(uuid.uuid4()),
             "timestamp": datetime.utcnow().isoformat(),
             "event_type": event_type,
-            "game_id": self.game['id'],
+            "game_id": str(self.game['id']),
             "game_name": self.game['name'],
             "player_id": self.player_id,
             "session_id": self.session_id,
@@ -260,25 +260,25 @@ def generate_fake_data():
         
         # C. System Stats (Aggregated heartbeat for Dashboard Scaling)
         if random.random() < 0.1: # Every ~10 ticks
+            regions = ['NA', 'EU', 'ASIA', 'SA', 'OCE']
             for g in games:
-                count = sum(1 for p in active_players if p.game['id'] == g['id'])
-                event = {
-                    "event_id": str(uuid.uuid4()),
-                    "timestamp": datetime.utcnow().isoformat(),
-                    "event_type": "status",
-                    "game_id": g['id'],
-                    "game_name": g['name'],
-                    "player_id": None,
-                    "session_id": None,
-                    "region": None,
-                    "platform": None,
-                    "player_type": None,
-                    "country": None,
-                    "player_count": count,
-                }
-                producer.send(TOPIC_NAME, event)
-
-
+                for reg in regions:
+                    count = sum(1 for p in active_players if p.game['id'] == g['id'])
+                    event = {
+                        "event_id": str(uuid.uuid4()),
+                        "timestamp": datetime.utcnow().isoformat(),
+                        "event_type": "status",
+                        "game_id": g['id'],
+                        "game_name": g['name'],
+                        "player_id": None,
+                        "session_id": None,
+                        "region": reg,
+                        "platform": None,
+                        "player_type": None,
+                        "country": None,
+                        "player_count": count,
+                    }
+                    producer.send(TOPIC_NAME, event)
         time.sleep(1)
 
 if __name__ == "__main__":

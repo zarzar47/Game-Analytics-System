@@ -59,7 +59,7 @@ def check_data_size_and_archive(**context):
     logging.info(f"MongoDB Total Size: {size_mb:.2f} MB")
     context['ti'].xcom_push(key='mongodb_size_mb', value=size_mb)
     
-    if size_mb > 0:
+    if size_mb > 10:
         logging.warning(f"ALERT: Size {size_mb:.2f} MB exceeds 300 MB threshold")
         context['ti'].xcom_push(key='archive_required', value=True)
         return 'archive_to_hadoop'
@@ -333,44 +333,76 @@ ingest_task = PythonOperator(
 # ============================================================================
 
 def etl_mongo_to_postgres(**context):
-    """
-    Extracts data from MongoDB, transforms it, and loads into PostgreSQL star schema.
-    """
-    import psycopg2
-    # Import the hook instead of raw MongoClient
     from airflow.providers.mongo.hooks.mongo import MongoHook
-    
-    # 1. Use the Hook to get a connection that already has your admin/admin credentials
+    import psycopg2
+    from psycopg2.extras import execute_values
+
     mongo_hook = MongoHook(conn_id='mongo_default')
-    mongo_client = mongo_hook.get_conn()
-    mongo_db = mongo_client['game_analytics']
+    mongo_db = mongo_hook.get_conn()['game_analytics']
     
-    # 2. PostgreSQL connection (ensure your credentials match)
-    pg_conn = psycopg2.connect(
-        host='db',
-        database='game_analytics',
-        user='rafay',
-        password='rafay'
-    )
-    pg_cursor = pg_conn.cursor()
-    
-    # 3. Proceed with the logic
-    # The 'transactions' find command will now work because mongo_client is authenticated
-    transactions = mongo_db['transactions'].find({
+    pg_conn = psycopg2.connect(host='db', database='game_analytics', user='rafay', password='rafay')
+    cur = pg_conn.cursor()
+
+    # 1. Fetch recent events from Mongo
+    # Look back 10 minutes to ensure we don't miss anything between DAG runs
+    events = list(mongo_db['game_events'].find({
         'timestamp': {'$gte': datetime.utcnow() - timedelta(minutes=10)}
-    })
+    }))
     
-    inserted = 0
-    for txn in transactions:
-        # ... rest of your insertion logic ...
-        inserted += 1
-    
+    if not events:
+        logging.info("No new events to process.")
+        return
+
+    # 2. POPULATE DIMENSIONS (Must do this first for Foreign Key constraints)
+    for e in events:
+        # Update dim_player
+        cur.execute("""
+            INSERT INTO dim_player (player_id, region, platform, player_segment, is_active)
+            VALUES (%s, %s, %s, %s, TRUE)
+            ON CONFLICT (player_id) DO UPDATE SET 
+                last_login = CURRENT_TIMESTAMP,
+                player_segment = EXCLUDED.player_segment;
+        """, (e.get('player_id'), e.get('region'), e.get('platform'), e.get('player_type')))
+
+        # Update dim_game
+        cur.execute("""
+            INSERT INTO dim_game (game_id, game_name)
+            VALUES (%s, %s)
+            ON CONFLICT (game_id) DO NOTHING;
+        """, (e.get('game_id'), e.get('game_name')))
+
+    # 3. POPULATE FACT TABLES
+    for e in events:
+        etype = e.get('event_type')
+        
+        # Helper: Ensure Time Dimension exists for this timestamp
+        cur.execute("""
+            INSERT INTO dim_time (timestamp, hour, day, month, year, is_weekend)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (timestamp) DO NOTHING RETURNING time_id;
+        """, (e['timestamp'], e['timestamp'].hour, e['timestamp'].day, 
+              e['timestamp'].month, e['timestamp'].year, e['timestamp'].weekday() >= 5))
+        
+        # Link to Fact Telemetry (Performance)
+        if etype == 'heartbeat':
+            cur.execute("""
+                INSERT INTO fact_telemetry (session_id, game_id, fps, latency_ms, platform, region)
+                VALUES (%s, %s, %s, %s, %s, %s);
+            """, (e.get('session_id'), e.get('game_id'), e.get('fps'), 
+                  e.get('latency_ms'), e.get('platform'), e.get('region')))
+
+        # Link to Fact Transaction (Revenue)
+        elif etype == 'purchase':
+            cur.execute("""
+                INSERT INTO fact_transaction (transaction_id, session_id, player_id, game_id, amount_usd, currency)
+                VALUES (%s, %s, %s, %s, %s, %s);
+            """, (e.get('event_id'), e.get('session_id'), e.get('player_id'), 
+                  e.get('game_id'), e.get('purchase_amount'), 'USD'))
+
     pg_conn.commit()
-    pg_cursor.close()
+    cur.close()
     pg_conn.close()
-    # Note: Do not close the mongo_client manually if using the hook's connection
-    
-    logging.info(f"ETL completed: {inserted} transactions loaded to PostgreSQL")
+    logging.info(f"Successfully processed {len(events)} events into Star Schema.")
 
 etl_task = PythonOperator(
     task_id='etl_mongo_to_postgres',

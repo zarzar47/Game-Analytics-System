@@ -1,24 +1,24 @@
 [
   {
-    "id": "valorant",
+    "id": "101",
     "name": "Valorant",
     "cover_url": "https://cdn2.steamgriddb.com/thumb/9edb6b9b7fc3b263b86740c635839dc4.jpg",
     "tags": ["FPS", "Tactical", "Competitive", "Hero Shooter"]
   },
   {
-    "id": "elden_ring",
+    "id": "102",
     "name": "Elden Ring",
     "cover_url": "https://upload.wikimedia.org/wikipedia/en/thumb/b/b9/Elden_Ring_Box_art.jpg/220px-Elden_Ring_Box_art.jpg",
     "tags": ["RPG", "Open World", "Souls-like", "Dark Fantasy"]
   },
   {
-    "id": "minecraft",
+    "id": "103",
     "name": "Minecraft",
     "cover_url": "https://cdn2.steamgriddb.com/thumb/a73027901f88055aaa0fd1a9e25d36c7.jpg",
     "tags": ["Sandbox", "Survival", "Multiplayer", "Creative"]
   },
   {
-    "id": "stardew_valley",
+    "id": "104",
     "name": "Stardew Valley",
     "cover_url": "https://cdn2.steamgriddb.com/thumb/ae3cc6a9c0dfe9bef84a66e311bb779a.jpg",
     "tags": ["Simulation", "Farming", "Indie", "RPG"]
