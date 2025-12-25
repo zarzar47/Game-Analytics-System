@@ -50,7 +50,7 @@ def get_spark_session():
         .getOrCreate()
     )
     spark.sparkContext.setLogLevel("WARN")
-    print("✅ Spark Session Created\n")
+    print("Spark Session Created\n")
     return spark
 
 def debug_raw_kafka(df, epoch_id):
@@ -62,7 +62,7 @@ def debug_raw_kafka(df, epoch_id):
     if count > 0:
         df.show(5, truncate=False)
     else:
-        print("⚠️ NO MESSAGES IN KAFKA STREAM!")
+        print(" NO MESSAGES IN KAFKA STREAM!")
     print("=" * 80 + "\n")
 
 def debug_parsed_events(df, epoch_id):
@@ -77,10 +77,10 @@ def debug_parsed_events(df, epoch_id):
         # Check for NULL timestamps
         null_count = df.filter(col("timestamp").isNull()).count()
         if null_count > 0:
-            print(f"⚠️ WARNING: {null_count} events have NULL timestamps!")
+            print(f"WARNING: {null_count} events have NULL timestamps!")
             df.filter(col("timestamp").isNull()).select("event_type", "timestamp").show(3)
     else:
-        print("⚠️ NO EVENTS AFTER PARSING!")
+        print("NO EVENTS AFTER PARSING!")
     print("=" * 80 + "\n")
 
 def debug_filtered_events(df, epoch_id, event_type):
@@ -92,7 +92,7 @@ def debug_filtered_events(df, epoch_id, event_type):
     if count > 0:
         df.show(3, truncate=False)
     else:
-        print(f"⚠️ NO {event_type.upper()} EVENTS FOUND!")
+        print(f"NO {event_type.upper()} EVENTS FOUND!")
     print("=" * 80 + "\n")
 
 def write_to_postgres(df, epoch_id, table_name):
@@ -101,7 +101,7 @@ def write_to_postgres(df, epoch_id, table_name):
         timestamp = time.strftime('%H:%M:%S')
         
         if row_count > 0:
-            print(f"✅ [{timestamp}] Writing {row_count} rows to {table_name}")
+            print(f"[{timestamp}] Writing {row_count} rows to {table_name}")
             df.show(2, truncate=False)
             
             (
@@ -117,10 +117,10 @@ def write_to_postgres(df, epoch_id, table_name):
             )
             print(f"✅ Successfully wrote to {table_name}\n")
         else:
-            print(f"⏳ [{timestamp}] No rows for {table_name} (watermark delay)\n")
+            print(f"[{timestamp}] No rows for {table_name} (watermark delay)\n")
             
     except Exception as e:
-        print(f"❌ ERROR writing to {table_name}: {e}\n")
+        print(f" ERROR writing to {table_name}: {e}\n")
         import traceback
         traceback.print_exc()
 

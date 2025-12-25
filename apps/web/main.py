@@ -101,7 +101,7 @@ def fetch_weekend_metrics(game_id: str):
 # ============================================================================
 
 def render_game_detail(game):
-    st.title(f"📊 {game['name']} - Star Schema Analytics")
+    st.title(f"{game['name']} - Star Schema Analytics")
     
     # Fetch all data
     overview = fetch_star_schema_overview(game['id'])
@@ -113,7 +113,7 @@ def render_game_detail(game):
     # ========================================================================
     # SECTION 1: KEY METRICS (From Star Schema Joins)
     # ========================================================================
-    st.header("🎯 Key Performance Indicators")
+    st.header("Key Performance Indicators")
     
     if overview:
         col1, col2, col3, col4 = st.columns(4)
@@ -147,7 +147,7 @@ def render_game_detail(game):
             )
         
         # Performance metrics
-        st.subheader("🎮 Performance Metrics (From fact_telemetry)")
+        st.subheader("Performance Metrics (From fact_telemetry)")
         col1, col2 = st.columns(2)
         
         with col1:
@@ -255,7 +255,7 @@ def render_game_detail(game):
     # ========================================================================
     # SECTION 4: TOP SPENDERS
     # ========================================================================
-    st.header("🏆 Top Spenders (Whale Analysis)")
+    st.header("Top Spenders (Whale Analysis)")
     st.caption("**Query:** JOIN fact_transaction with dim_player, ORDER BY total revenue DESC")
     
     if not spenders_df.empty:
@@ -321,7 +321,7 @@ def render_game_detail(game):
 # ============================================================================
 
 def render_dashboard():
-    st.title("🌍 Game Analytics Dashboard - Star Schema Edition")
+    st.title("Game Analytics Dashboard - Star Schema Edition")
     
     st.markdown("""
     ### 🎯 What's New in This Version:
