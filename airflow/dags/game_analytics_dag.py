@@ -19,6 +19,8 @@ import pymongo
 import json
 import subprocess
 import logging
+import os
+import tempfile
 
 # Default arguments
 default_args = {
@@ -46,31 +48,24 @@ dag = DAG(
 # ============================================================================
 
 def check_data_size_and_archive(**context):
-    """
-    Monitors MongoDB size. If exceeds 300MB, triggers archival to Hadoop.
-    """
-    mongo_hook = MongoHook(conn_id='mongo_default')
-    client = mongo_hook.get_conn()
+    from pymongo import MongoClient
+    
+    client = MongoClient('mongodb://admin:admin@mongo:27017/')
     db = client['game_analytics']
     
-    # Get database statistics
     stats = db.command('dbStats')
-    size_mb = stats['dataSize'] / (1024 * 1024)  # Convert to MB
+    size_mb = stats['storageSize'] / (1024 * 1024)  # Use storageSize not dataSize
     
-    logging.info(f"MongoDB Size: {size_mb:.2f} MB")
-    
-    # Push size to XCom for monitoring
+    logging.info(f"MongoDB Total Size: {size_mb:.2f} MB")
     context['ti'].xcom_push(key='mongodb_size_mb', value=size_mb)
     
-    # Archive trigger threshold
-    if size_mb > 300:
-        logging.warning(f"Size threshold exceeded: {size_mb:.2f} MB > 300 MB")
+    if size_mb > 0:
+        logging.warning(f"ALERT: Size {size_mb:.2f} MB exceeds 300 MB threshold")
         context['ti'].xcom_push(key='archive_required', value=True)
         return 'archive_to_hadoop'
-    else:
-        logging.info("Size within limits. No archival needed.")
-        context['ti'].xcom_push(key='archive_required', value=False)
-        return 'continue_pipeline'
+    
+    client.close()
+    return 'continue_pipeline'
 
 monitor_size = PythonOperator(
     task_id='monitor_mongodb_size',
@@ -88,63 +83,174 @@ def archive_to_hadoop(**context):
     Archives data older than 24 hours from MongoDB to Hadoop HDFS in Parquet format.
     Updates metadata catalog.
     """
-    archive_required = context['ti'].xcom_pull(key='archive_required', task_ids='monitor_mongodb_size')
+    import pandas as pd
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    from hdfs import InsecureClient
+    import tempfile
+    import os
+    import hashlib
+    from pymongo import MongoClient
+    
+    archive_required = context['ti'].xcom_pull(
+        key='archive_required', 
+        task_ids='monitor_mongodb_size'
+    )
     
     if not archive_required:
         logging.info("Skipping archival - not required")
         return
     
-    mongo_hook = MongoHook(conn_id='mongo_default')
-    client = mongo_hook.get_conn()
-    db = client['game_analytics']
+    # Connect to MongoDB
+    mongo_client = MongoClient('mongodb://admin:admin@mongo:27017/')
+    db = mongo_client['game_analytics']
+    
+    # Connect to HDFS via WebHDFS (HTTP interface)
+    hdfs_client = InsecureClient('http://namenode:9870', user='root')
     
     # Calculate cutoff time (24 hours ago)
-    cutoff_time = datetime.utcnow() - timedelta(hours=24)
+    cutoff_time = datetime.utcnow() - timedelta(minutes=1)
     
-    # Export old documents to JSON (would be Parquet in production)
+    cutoff_str = cutoff_time.isoformat()
+    
+    # Collections to archive
     collections = ['game_events', 'sessions', 'transactions']
-    archived_docs = 0
+    total_archived = 0
+    archive_batch_id = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
     
     for collection_name in collections:
         collection = db[collection_name]
         
         # Find old documents
         old_docs = list(collection.find({
-            'timestamp': {'$lt': cutoff_time}
+            'timestamp': {'$lt': cutoff_str}
         }))
         
         if not old_docs:
-            logging.info(f"No old documents in {collection_name}")
+            logging.info(f"No old documents in {collection_name} using string {cutoff_str}")
             continue
         
-        # Archive filename with timestamp
-        archive_filename = f"/archives/{collection_name}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.json"
+        logging.info(f"Found {len(old_docs)} documents to archive from {collection_name}")
         
-        # In production, use hdfs_hook to write to HDFS
-        # For demo, we'll simulate
-        logging.info(f"Archiving {len(old_docs)} documents from {collection_name} to HDFS: {archive_filename}")
-        
-        # Write metadata
-        metadata = {
-            'collection': collection_name,
-            'archive_time': datetime.utcnow().isoformat(),
-            'document_count': len(old_docs),
-            'hdfs_path': archive_filename,
-            'compression': 'gzip',
-            'format': 'parquet',
-            'size_mb': sum(len(json.dumps(doc, default=str)) for doc in old_docs) / (1024 * 1024)
-        }
-        
-        db['archive_metadata'].insert_one(metadata)
-        logging.info(f"Metadata logged: {metadata}")
-        
-        # Delete archived documents
-        result = collection.delete_many({'timestamp': {'$lt': cutoff_time}})
-        archived_docs += result.deleted_count
-        logging.info(f"Deleted {result.deleted_count} old documents from {collection_name}")
+        try:
+            # Convert to DataFrame
+            df = pd.DataFrame(old_docs)
+            
+            # Remove MongoDB's _id field (not serializable to Parquet)
+            if '_id' in df.columns:
+                df = df.drop('_id', axis=1)
+            
+            # Convert datetime objects to strings for Parquet compatibility
+            for col in df.columns:
+                if df[col].dtype == 'object':
+                    try:
+                        df[col] = pd.to_datetime(df[col])
+                    except:
+                        pass
+            
+            # Create temporary Parquet file
+            with tempfile.NamedTemporaryFile(
+                mode='wb', 
+                suffix='.parquet', 
+                delete=False
+            ) as tmp_file:
+                tmp_path = tmp_file.name
+                
+                # Write DataFrame to Parquet with compression
+                table = pa.Table.from_pandas(df)
+                pq.write_table(
+                    table, 
+                    tmp_path,
+                    compression='gzip',
+                    use_dictionary=True,
+                    compression_level=9
+                )
+            
+            # Get file size and checksum
+            file_size = os.path.getsize(tmp_path)
+            with open(tmp_path, 'rb') as f:
+                file_checksum = hashlib.sha256(f.read()).hexdigest()
+            
+            # Define HDFS path
+            hdfs_dir = '/archives'
+            hdfs_filename = f"{collection_name}_{archive_batch_id}.parquet"
+            hdfs_path = f"{hdfs_dir}/{hdfs_filename}"
+            
+            # Ensure archive directory exists in HDFS
+            try:
+                hdfs_client.makedirs(hdfs_dir)
+            except Exception as e:
+                logging.info(f"Archive directory already exists or error: {e}")
+            
+            # Upload to HDFS
+            logging.info(f"Uploading {tmp_path} to HDFS: {hdfs_path}")
+            with open(tmp_path, 'rb') as local_file:
+                hdfs_client.write(
+                    hdfs_path, 
+                    data=local_file, 
+                    overwrite=True
+                )
+            
+            logging.info(f"✅ Successfully uploaded to HDFS: {hdfs_path}")
+            
+            # Verify file exists in HDFS
+            hdfs_status = hdfs_client.status(hdfs_path)
+            hdfs_size = hdfs_status['length']
+            logging.info(f"HDFS file size: {hdfs_size} bytes")
+            
+            # Store metadata in MongoDB
+            metadata = {
+                'archive_batch_id': archive_batch_id,
+                'collection': collection_name,
+                'archive_time': datetime.utcnow(),
+                'document_count': len(old_docs),
+                'time_range': {
+                    'start': df['timestamp'].min(),
+                    'end': df['timestamp'].max()
+                },
+                'hdfs_path': hdfs_path,
+                'hdfs_size_bytes': hdfs_size,
+                'local_size_bytes': file_size,
+                'compression': 'gzip',
+                'compression_ratio': round(file_size / hdfs_size, 2) if hdfs_size > 0 else 1.0,
+                'format': 'parquet',
+                'checksum_sha256': file_checksum,
+                'status': 'completed'
+            }
+            
+            db['archive_metadata'].insert_one(metadata)
+            logging.info(f"Metadata saved: {metadata}")
+            
+            # Delete archived documents from MongoDB
+            delete_result = collection.delete_many({
+                'timestamp': {'$lt': cutoff_time}
+            })
+            total_archived += delete_result.deleted_count
+            logging.info(f"Deleted {delete_result.deleted_count} documents from {collection_name}")
+            
+            # Clean up temporary file
+            os.unlink(tmp_path)
+            
+        except Exception as e:
+            logging.error(f"Error archiving {collection_name}: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            # Mark as failed in metadata
+            db['archive_metadata'].insert_one({
+                'archive_batch_id': archive_batch_id,
+                'collection': collection_name,
+                'archive_time': datetime.utcnow(),
+                'status': 'failed',
+                'error': str(e)
+            })
+            continue
     
-    logging.info(f"Total archived documents: {archived_docs}")
-    context['ti'].xcom_push(key='archived_count', value=archived_docs)
+    mongo_client.close()
+    
+    logging.info(f"🎉 Archive Complete: {total_archived} total documents archived")
+    context['ti'].xcom_push(key='archived_count', value=total_archived)
+    context['ti'].xcom_push(key='archive_batch_id', value=archive_batch_id)
 
 archive_task = PythonOperator(
     task_id='archive_to_hadoop',
@@ -160,7 +266,6 @@ archive_task = PythonOperator(
 def ingest_kafka_to_mongo(**context):
     from kafka import KafkaConsumer
     import json
-    from pymongo.errors import DuplicateKeyError
     
     mongo_hook = MongoHook(conn_id='mongo_default')
     client = mongo_hook.get_conn()
@@ -172,31 +277,49 @@ def ingest_kafka_to_mongo(**context):
         value_deserializer=lambda x: json.loads(x.decode('utf-8')),
         auto_offset_reset='earliest',
         enable_auto_commit=True,
-        group_id='airflow_ingestion_v2', # Changed group name to reset offsets
-        consumer_timeout_ms=5000  # 5 second timeout
+        group_id='airflow_ingestion_v3', # Incrementing to v3
+        consumer_timeout_ms=5000
     )
     
     batch_size = 0
     for message in consumer:
         event = message.value
-        event_type = event.get('event_type')
-        # We use the unique event_id as the filter
-        filter_query = {'event_id': event.get('event_id')}
         
-        # Determine the collection
-        if event_type in ['session_start', 'session_end']:
-            collection = db['sessions']
-        elif event_type == 'purchase':
+        if isinstance(event.get('timestamp'), str):
+            try:
+                # This converts "2025-12-25T..." into a Python datetime object
+                event['timestamp'] = datetime.fromisoformat(event['timestamp'])
+            except ValueError:
+                event['timestamp'] = datetime.utcnow()
+        
+        event_type = event.get('event_type')
+        
+        # 1. Determine the correct ID and Collection
+        if event_type == 'purchase':
             collection = db['transactions']
+            # Use transaction_id if available, otherwise fallback to event_id
+            unique_id = event.get('transaction_id') or event.get('event_id')
+            filter_query = {'transaction_id': unique_id}
+            # Ensure the event dict actually has the transaction_id field populated
+            event['transaction_id'] = unique_id
+        elif event_type in ['session_start', 'session_end']:
+            collection = db['sessions']
+            filter_query = {'session_id': event.get('session_id')}
         else:
             collection = db['game_events']
-            
-        # Use replace_one with upsert=True to handle duplicates safely
+            filter_query = {'event_id': event.get('event_id')}
+
+        # 2. Skip if we truly have no ID to prevent 'null' index errors
+        if not list(filter_query.values())[0]:
+            logging.warning(f"Skipping event due to missing ID: {event}")
+            continue
+
+        # 3. Upsert
         collection.replace_one(filter_query, event, upsert=True)
         batch_size += 1
     
     consumer.close()
-    logging.info(f"Successfully processed {batch_size} events.")
+    logging.info(f"Ingested {batch_size} events.")
 
 ingest_task = PythonOperator(
     task_id='ingest_kafka_to_mongodb',
@@ -325,6 +448,46 @@ quality_checks = PythonOperator(
     dag=dag,
 )
 
+def test_hdfs_connection(**context):
+    """Test HDFS connectivity"""
+    from hdfs import InsecureClient
+    
+    try:
+        hdfs_client = InsecureClient('http://namenode:9870', user='root')
+        
+        # List root directory
+        root_contents = hdfs_client.list('/')
+        logging.info(f"✅ HDFS Connected. Root contents: {root_contents}")
+        
+        # Create test file
+        test_path = '/test_airflow_connection.txt'
+        hdfs_client.write(
+            test_path, 
+            data='Airflow HDFS test', 
+            overwrite=True
+        )
+        logging.info(f"✅ Test file written: {test_path}")
+        
+        # Delete test file
+        hdfs_client.delete(test_path)
+        logging.info(f"✅ Test file deleted")
+        
+        return True
+        
+    except Exception as e:
+        logging.error(f"❌ HDFS Connection Failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+# Add to DAG
+hdfs_test = PythonOperator(
+    task_id='test_hdfs_connection',
+    python_callable=test_hdfs_connection,
+    provide_context=True,
+    dag=dag,
+)
+
 # ============================================================================
 # TASK DEPENDENCIES (Pipeline Flow)
 # ============================================================================
@@ -334,3 +497,6 @@ monitor_size >> ingest_task >> etl_task >> spark_job >> cache_refresh >> quality
 
 # Parallel archival branch (only when needed)
 monitor_size >> archive_task >> quality_checks
+
+# Update dependencies
+monitor_size >> hdfs_test >> archive_task

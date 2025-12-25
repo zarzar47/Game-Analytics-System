@@ -125,106 +125,62 @@ def write_to_postgres(df, epoch_id, table_name):
         traceback.print_exc()
 
 if __name__ == "__main__":
-    print("=" * 80)
-    print("🐛 SPARK STREAMING DEBUG MODE")
-    print("=" * 80)
-    print("This will show you EXACTLY what Spark is reading from Kafka\n")
-    
     spark = get_spark_session()
     
     # Read from Kafka
-    print(f"📡 Reading from Kafka: {KAFKA_BOOTSTRAP_SERVERS}, topic: {KAFKA_TOPIC}\n")
     kafka_df = (
         spark.readStream
         .format("kafka")
         .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP_SERVERS)
         .option("subscribe", KAFKA_TOPIC)
-        .option("startingOffsets", "earliest")
-        .option("failOnDataLoss", "false")
+        .option("startingOffsets", "latest")
         .load()
     )
     
-    # STEP 1: Debug raw Kafka messages
-    print("🔍 STEP 1: Checking raw Kafka stream...\n")
-    raw_debug = (
-        kafka_df
-        .selectExpr("CAST(key AS STRING)", "CAST(value AS STRING)", "timestamp", "partition", "offset")
-        .writeStream
-        .foreachBatch(debug_raw_kafka)
-        .outputMode("append")
-        .trigger(processingTime="10 seconds")
-        .start()
-    )
-    
-    # Wait a bit for first batch
-    time.sleep(15)
-    
-    # STEP 2: Parse and check events
-    print("\n🔍 STEP 2: Parsing JSON events...\n")
+    # Parse events
     events_df = (
         kafka_df
         .selectExpr("CAST(value AS STRING) as json")
         .select(from_json(col("json"), EVENT_SCHEMA).alias("data"))
         .select("data.*")
         .withColumn("timestamp", to_timestamp(col("timestamp")))
+        .withWatermark("timestamp", "30 seconds")
     )
     
-    parsed_debug = (
+    # Revenue Analytics
+    revenue_agg = (
         events_df
-        .writeStream
-        .foreachBatch(debug_parsed_events)
-        .outputMode("append")
+        .filter(lower(col("event_type")) == "purchase")
+        .groupBy(
+            window("timestamp", "1 minute"),
+            "game_name",
+            "player_type"
+        )
+        .agg(
+            sum("purchase_amount").alias("total_revenue"),
+            avg("purchase_amount").alias("avg_purchase"),
+            approx_count_distinct("player_id").alias("unique_purchasers")
+        )
+        .select(
+            col("window.start").alias("window_start"),
+            col("window.end").alias("window_end"),
+            "game_name",
+            "player_type",
+            "total_revenue",
+            "avg_purchase",
+            "unique_purchasers"
+        )
+    )
+    
+    revenue_query = (
+        revenue_agg.writeStream
+        .foreachBatch(lambda df, epoch: write_to_postgres(df, epoch, "realtime_revenue"))
+        .outputMode("update")
         .trigger(processingTime="10 seconds")
+        .option("checkpointLocation", "/tmp/checkpoints/revenue")
         .start()
     )
     
-    # Wait for another batch
-    time.sleep(15)
+    # Similar implementations for concurrency and performance...
     
-    # STEP 3: Check specific event types
-    print("\n🔍 STEP 3: Checking purchase events...\n")
-    purchase_df = events_df.filter(lower(col("event_type")) == "purchase")
-    
-    purchase_debug = (
-        purchase_df
-        .writeStream
-        .foreachBatch(lambda df, epoch: debug_filtered_events(df, epoch, "purchase"))
-        .outputMode("append")
-        .trigger(processingTime="10 seconds")
-        .start()
-    )
-    
-    time.sleep(15)
-    
-    print("\n🔍 STEP 4: Checking heartbeat events...\n")
-    heartbeat_df = events_df.filter(lower(col("event_type")) == "heartbeat")
-    
-    heartbeat_debug = (
-        heartbeat_df
-        .writeStream
-        .foreachBatch(lambda df, epoch: debug_filtered_events(df, epoch, "heartbeat"))
-        .outputMode("append")
-        .trigger(processingTime="10 seconds")
-        .start()
-    )
-    
-    print("\n" + "=" * 80)
-    print("🐛 DEBUG MODE RUNNING")
-    print("=" * 80)
-    print("Watch the output above to see:")
-    print("  1. Are messages being read from Kafka?")
-    print("  2. Are they being parsed correctly?")
-    print("  3. Are timestamps NULL?")
-    print("  4. Are event_type filters working?")
-    print("=" * 80)
-    print("\nPress CTRL+C when you have enough debug info...\n")
-    
-    try:
-        spark.streams.awaitAnyTermination()
-    except KeyboardInterrupt:
-        print("\n🛑 Stopping debug mode...")
-        raw_debug.stop()
-        parsed_debug.stop()
-        purchase_debug.stop()
-        heartbeat_debug.stop()
-        spark.stop()
+    spark.streams.awaitAnyTermination()

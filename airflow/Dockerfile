@@ -24,4 +24,6 @@ RUN pip install --no-cache-dir \
     "kafka-python" \
     "requests" \
     "pandas" \
+    "pyarrow" \
+    "hdfs" \
     --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.7.0/constraints-3.11.txt"

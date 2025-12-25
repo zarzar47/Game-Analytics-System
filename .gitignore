@@ -27,6 +27,4 @@ Thumbs.db
 .idea/
 
 # Supabase / Local
-supabase/
-IMPLEMENTATION.md
-ROADMAP.md
+airflow/logs/*
