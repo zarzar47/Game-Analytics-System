@@ -265,42 +265,48 @@ archive_task = PythonOperator(
 
 def ingest_kafka_to_mongo(**context):
     from kafka import KafkaConsumer
+    from airflow.providers.mongo.hooks.mongo import MongoHook
     import json
-    
+    import logging
+    from datetime import datetime
+
+    # 1. Authenticated Mongo Connection
     mongo_hook = MongoHook(conn_id='mongo_default')
     client = mongo_hook.get_conn()
-    db = client['game_analytics']
+    # Explicitly use the 'game_analytics' DB through the authenticated client
+    db = client.get_database('game_analytics')
     
+    # 2. Kafka Consumer Setup
     consumer = KafkaConsumer(
         'GameAnalytics',
         bootstrap_servers='kafka:29092',
         value_deserializer=lambda x: json.loads(x.decode('utf-8')),
         auto_offset_reset='earliest',
         enable_auto_commit=True,
-        group_id='airflow_ingestion_v3', # Incrementing to v3
-        consumer_timeout_ms=5000
+        group_id='airflow_ingestion_v4', # Incremented group_id to ensure we process fresh data
+        consumer_timeout_ms=5000 # Stop if no new messages for 5 seconds
     )
     
     batch_size = 0
+    logging.info("Starting Kafka ingestion to MongoDB...")
+
     for message in consumer:
         event = message.value
         
+        # Parse timestamp string to Python datetime
         if isinstance(event.get('timestamp'), str):
             try:
-                # This converts "2025-12-25T..." into a Python datetime object
                 event['timestamp'] = datetime.fromisoformat(event['timestamp'])
             except ValueError:
                 event['timestamp'] = datetime.utcnow()
         
         event_type = event.get('event_type')
         
-        # 1. Determine the correct ID and Collection
+        # 3. Routing to correct collection and setting filter for Upsert
         if event_type == 'purchase':
             collection = db['transactions']
-            # Use transaction_id if available, otherwise fallback to event_id
-            unique_id = event.get('transaction_id') or event.get('event_id')
+            unique_id = event.get('event_id') or event.get('transaction_id')
             filter_query = {'transaction_id': unique_id}
-            # Ensure the event dict actually has the transaction_id field populated
             event['transaction_id'] = unique_id
         elif event_type in ['session_start', 'session_end']:
             collection = db['sessions']
@@ -309,17 +315,20 @@ def ingest_kafka_to_mongo(**context):
             collection = db['game_events']
             filter_query = {'event_id': event.get('event_id')}
 
-        # 2. Skip if we truly have no ID to prevent 'null' index errors
+        # 4. Safety Check: If ID is missing, don't try to update
         if not list(filter_query.values())[0]:
-            logging.warning(f"Skipping event due to missing ID: {event}")
             continue
 
-        # 3. Upsert
-        collection.replace_one(filter_query, event, upsert=True)
-        batch_size += 1
+        # 5. The Authenticated Upsert
+        try:
+            collection.replace_one(filter_query, event, upsert=True)
+            batch_size += 1
+        except Exception as e:
+            logging.error(f"Failed to insert event: {e}")
+            continue
     
     consumer.close()
-    logging.info(f"Ingested {batch_size} events.")
+    logging.info(f"Successfully ingested {batch_size} events into MongoDB.")
 
 ingest_task = PythonOperator(
     task_id='ingest_kafka_to_mongodb',
@@ -336,74 +345,116 @@ def etl_mongo_to_postgres(**context):
     from airflow.providers.mongo.hooks.mongo import MongoHook
     import psycopg2
     from psycopg2.extras import execute_values
+    from datetime import datetime, timedelta
+    import logging
 
+    # 1. Setup Connections
     mongo_hook = MongoHook(conn_id='mongo_default')
-    mongo_db = mongo_hook.get_conn()['game_analytics']
+    client = mongo_hook.get_conn()
+    mongo_db = client.get_database('game_analytics')
     
     pg_conn = psycopg2.connect(host='db', database='game_analytics', user='rafay', password='rafay')
     cur = pg_conn.cursor()
 
-    # 1. Fetch recent events from Mongo
-    # Look back 10 minutes to ensure we don't miss anything between DAG runs
-    events = list(mongo_db['game_events'].find({
-        'timestamp': {'$gte': datetime.utcnow() - timedelta(minutes=10)}
-    }))
-    
-    if not events:
-        logging.info("No new events to process.")
+    # 2. Extract Data
+    lookback = datetime.utcnow() - timedelta(minutes=15)
+    # Pull from both collections
+    events = list(mongo_db['game_events'].find({'timestamp': {'$gte': lookback}}))
+    txns = list(mongo_db['transactions'].find({'timestamp': {'$gte': lookback}}))
+    all_data = events + txns
+
+    if not all_data:
+        logging.info("No data found in MongoDB for the current window.")
         return
 
-    # 2. POPULATE DIMENSIONS (Must do this first for Foreign Key constraints)
-    for e in events:
-        # Update dim_player
-        cur.execute("""
-            INSERT INTO dim_player (player_id, region, platform, player_segment, is_active)
-            VALUES (%s, %s, %s, %s, TRUE)
-            ON CONFLICT (player_id) DO UPDATE SET 
-                last_login = CURRENT_TIMESTAMP,
-                player_segment = EXCLUDED.player_segment;
-        """, (e.get('player_id'), e.get('region'), e.get('platform'), e.get('player_type')))
+    logging.info(f"ETL: Processing {len(all_data)} records...")
 
-        # Update dim_game
-        cur.execute("""
-            INSERT INTO dim_game (game_id, game_name)
-            VALUES (%s, %s)
-            ON CONFLICT (game_id) DO NOTHING;
-        """, (e.get('game_id'), e.get('game_name')))
+    try:
+        # 3. UPSERT DIMENSIONS (Step 1 of Star Schema)
+        for r in all_data:
+            pid = r.get('player_id')
+            gid = r.get('game_id')
+            sid = r.get('session_id')
 
-    # 3. POPULATE FACT TABLES
-    for e in events:
-        etype = e.get('event_type')
-        
-        # Helper: Ensure Time Dimension exists for this timestamp
-        cur.execute("""
-            INSERT INTO dim_time (timestamp, hour, day, month, year, is_weekend)
-            VALUES (%s, %s, %s, %s, %s, %s)
-            ON CONFLICT (timestamp) DO NOTHING RETURNING time_id;
-        """, (e['timestamp'], e['timestamp'].hour, e['timestamp'].day, 
-              e['timestamp'].month, e['timestamp'].year, e['timestamp'].weekday() >= 5))
-        
-        # Link to Fact Telemetry (Performance)
-        if etype == 'heartbeat':
+            # Skip Global Status events for Dimensions
+            if pid:
+                cur.execute("""
+                    INSERT INTO dim_player (player_id, region, platform, player_segment, last_login)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (player_id) DO UPDATE SET 
+                        last_login = EXCLUDED.last_login,
+                        player_segment = COALESCE(EXCLUDED.player_segment, dim_player.player_segment);
+                """, (pid, r.get('region'), r.get('platform'), r.get('player_type'), r.get('timestamp')))
+
+            if gid:
+                cur.execute("""
+                    INSERT INTO dim_game (game_id, game_name)
+                    VALUES (%s, %s)
+                    ON CONFLICT (game_id) DO NOTHING;
+                """, (gid, r.get('game_name')))
+                
+            # Create a Session placeholder if it doesn't exist
+            if sid and pid and gid:
+                cur.execute("""
+                    INSERT INTO fact_session (session_id, player_id, game_id)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (session_id) DO NOTHING;
+                """, (sid, pid, gid))
+
+        # 4. BATCH PREPARATION
+        telemetry_rows = []
+        transaction_rows = []
+
+        for r in all_data:
+            ts = r.get('timestamp')
+            etype = r.get('event_type')
+            if not ts: continue
+
+            # Create Time Dim entry and get ID
             cur.execute("""
-                INSERT INTO fact_telemetry (session_id, game_id, fps, latency_ms, platform, region)
-                VALUES (%s, %s, %s, %s, %s, %s);
-            """, (e.get('session_id'), e.get('game_id'), e.get('fps'), 
-                  e.get('latency_ms'), e.get('platform'), e.get('region')))
+                INSERT INTO dim_time (timestamp, hour, day, month, year, is_weekend)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (timestamp) DO UPDATE SET timestamp = EXCLUDED.timestamp
+                RETURNING time_id;
+            """, (ts, ts.hour, ts.day, ts.month, ts.year, ts.weekday() >= 5))
+            time_id = cur.fetchone()[0]
 
-        # Link to Fact Transaction (Revenue)
-        elif etype == 'purchase':
-            cur.execute("""
-                INSERT INTO fact_transaction (transaction_id, session_id, player_id, game_id, amount_usd, currency)
-                VALUES (%s, %s, %s, %s, %s, %s);
-            """, (e.get('event_id'), e.get('session_id'), e.get('player_id'), 
-                  e.get('game_id'), e.get('purchase_amount'), 'USD'))
+            if etype == 'heartbeat' and r.get('session_id'):
+                telemetry_rows.append((
+                    r.get('session_id'), r.get('game_id'), time_id,
+                    r.get('fps'), r.get('latency_ms'), r.get('platform'), r.get('region')
+                ))
+            elif etype == 'purchase' and r.get('player_id'):
+                transaction_rows.append((
+                    r.get('event_id') or r.get('transaction_id'),
+                    r.get('session_id'), r.get('player_id'), r.get('game_id'),
+                    time_id, r.get('purchase_amount'), 'USD'
+                ))
 
-    pg_conn.commit()
-    cur.close()
-    pg_conn.close()
-    logging.info(f"Successfully processed {len(events)} events into Star Schema.")
+        # 5. BULK LOAD FACTS
+        if telemetry_rows:
+            execute_values(cur, """
+                INSERT INTO fact_telemetry (session_id, game_id, time_id, fps, latency_ms, platform, region)
+                VALUES %s ON CONFLICT DO NOTHING;
+            """, telemetry_rows)
 
+        if transaction_rows:
+            execute_values(cur, """
+                INSERT INTO fact_transaction (transaction_id, session_id, player_id, game_id, time_id, amount_usd, currency)
+                VALUES %s ON CONFLICT DO NOTHING;
+            """, transaction_rows)
+
+        pg_conn.commit()
+        logging.info(f"ETL Success: {len(telemetry_rows)} telemetry, {len(transaction_rows)} transactions.")
+
+    except Exception as e:
+        pg_conn.rollback()
+        logging.error(f"ETL Failed: {e}")
+        raise
+    finally:
+        cur.close()
+        pg_conn.close()
+        
 etl_task = PythonOperator(
     task_id='etl_mongo_to_postgres',
     python_callable=etl_mongo_to_postgres,
