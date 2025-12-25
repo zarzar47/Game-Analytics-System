@@ -20,8 +20,12 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      # 1. This runs first (00) to create the airflow DB
+      - ./sql/00_init_airflow.sh:/docker-entrypoint-initdb.d/00_init_airflow.sh
+      # 2. This runs second (init) for Spark tables
       - ./apps/spark-processor/init.sql:/docker-entrypoint-initdb.d/init.sql
-      - ./sql/star_schema.sql:/docker-entrypoint-initdb.d/02_star_schema.sql
+      # 3. This runs third (01) for the Star Schema
+      - ./sql/01_star_schema.sql:/docker-entrypoint-initdb.d/01_star_schema.sql
     networks:
       - game_analytics_net
 
@@ -130,7 +134,7 @@ services:
       - AIRFLOW__CORE__FERNET_KEY=FB0o_zt4e3Ziq3LdUUO7F2Z95cvFFx16hU8jTeR1ASM=
       - AIRFLOW__CORE__LOAD_EXAMPLES=False
       - AIRFLOW__API__AUTH_BACKENDS=airflow.api.auth.backend.basic_auth
-      - AIRFLOW_CONN_MONGO_DEFAULT=mongodb://admin:admin@mongo:27017/
+      - AIRFLOW_CONN_MONGO_DEFAULT=mongodb://admin:admin@mongo:27017/game_analytics?authSource=admin
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
