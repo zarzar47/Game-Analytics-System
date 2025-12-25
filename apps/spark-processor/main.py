@@ -3,7 +3,7 @@ import time
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import (
     from_json, col, window, sum, avg, approx_count_distinct, 
-    to_timestamp, lower, current_timestamp, expr
+    to_timestamp, lower, current_timestamp, expr, lit, coalesce
 )
 from pyspark.sql.types import StructType, StructField, StringType, DoubleType, IntegerType
 
@@ -171,7 +171,8 @@ if __name__ == "__main__":
             "unique_purchasers"
         )
     )
-    
+
+    # 1. REVENUE QUERY (Already there, but ensuring it's part of the list)
     revenue_query = (
         revenue_agg.writeStream
         .foreachBatch(lambda df, epoch: write_to_postgres(df, epoch, "realtime_revenue"))
@@ -180,7 +181,72 @@ if __name__ == "__main__":
         .option("checkpointLocation", "/tmp/checkpoints/revenue")
         .start()
     )
-    
-    # Similar implementations for concurrency and performance...
-    
+
+    # 2. CONCURRENCY ANALYTICS
+    concurrency_agg = (
+        events_df
+        .filter(lower(col("event_type")) == "status")
+        # Ensure region is never NULL before grouping
+        .withColumn("region", coalesce(col("region"), lit("Global"))) 
+        .groupBy(
+            window("timestamp", "1 minute"),
+            "game_name",
+            "region"
+        )
+        .agg(
+            sum("player_count").alias("concurrent_players")
+        )
+        .select(
+            col("window.start").alias("window_start"),
+            col("window.end").alias("window_end"),
+            "game_name",
+            "region",
+            "concurrent_players"
+        )
+    )
+
+    concurrency_query = (
+        concurrency_agg.writeStream
+        .foreachBatch(lambda df, epoch: write_to_postgres(df, epoch, "realtime_concurrency"))
+        .outputMode("update")
+        .trigger(processingTime="10 seconds")
+        .option("checkpointLocation", "/tmp/checkpoints/concurrency")
+        .start()
+    )
+
+    # 3. PERFORMANCE ANALYTICS
+    performance_agg = (
+        events_df
+        .filter(lower(col("event_type")) == "heartbeat")
+        .groupBy(
+            window("timestamp", "1 minute"),
+            "game_name",
+            "platform",
+            "region"
+        )
+        .agg(
+            avg("fps").alias("avg_fps"),
+            avg("latency_ms").alias("avg_latency")
+        )
+        .select(
+            col("window.start").alias("window_start"),
+            col("window.end").alias("window_end"),
+            "game_name",
+            "platform",
+            "region",
+            "avg_fps",
+            "avg_latency"
+        )
+    )
+
+    performance_query = (
+        performance_agg.writeStream
+        .foreachBatch(lambda df, epoch: write_to_postgres(df, epoch, "realtime_performance"))
+        .outputMode("update")
+        .trigger(processingTime="10 seconds")
+        .option("checkpointLocation", "/tmp/checkpoints/performance")
+        .start()
+    )
+
+    # Keep the script running until all queries are terminated
     spark.streams.awaitAnyTermination()
