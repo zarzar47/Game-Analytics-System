@@ -1,5 +1,3 @@
--- This script is executed on the first run of the postgres container.
-
 -- Table for Real-time Revenue Analytics
 CREATE TABLE IF NOT EXISTS realtime_revenue (
     window_start TIMESTAMP,
@@ -33,3 +31,5 @@ CREATE TABLE IF NOT EXISTS realtime_performance (
     avg_latency DOUBLE PRECISION,
     PRIMARY KEY (window_start, game_name, platform, region)
 );
+
+CREATE DATABASE airflow;

@@ -1,0 +1,70 @@
+[2025-12-25T00:40:03.227+0000] {taskinstance.py:1159} INFO - Dependencies all met for dep_context=non-requeueable deps ti=<TaskInstance: game_analytics_pipeline.ingest_kafka_to_mongodb scheduled__2025-12-25T00:39:00+00:00 [queued]>
+[2025-12-25T00:40:03.241+0000] {taskinstance.py:1159} INFO - Dependencies all met for dep_context=requeueable deps ti=<TaskInstance: game_analytics_pipeline.ingest_kafka_to_mongodb scheduled__2025-12-25T00:39:00+00:00 [queued]>
+[2025-12-25T00:40:03.241+0000] {taskinstance.py:1361} INFO - Starting attempt 1 of 3
+[2025-12-25T00:40:03.254+0000] {taskinstance.py:1382} INFO - Executing <Task(PythonOperator): ingest_kafka_to_mongodb> on 2025-12-25 00:39:00+00:00
+[2025-12-25T00:40:03.265+0000] {standard_task_runner.py:57} INFO - Started process 406 to run task
+[2025-12-25T00:40:03.272+0000] {standard_task_runner.py:84} INFO - Running: ['airflow', 'tasks', 'run', 'game_analytics_pipeline', 'ingest_kafka_to_mongodb', 'scheduled__2025-12-25T00:39:00+00:00', '--job-id', '28', '--raw', '--subdir', 'DAGS_FOLDER/game_analytics_dag.py', '--cfg-path', '/tmp/tmpu43mkpme']
+[2025-12-25T00:40:03.283+0000] {standard_task_runner.py:85} INFO - Job 28: Subtask ingest_kafka_to_mongodb
+[2025-12-25T00:40:03.437+0000] {task_command.py:415} INFO - Running <TaskInstance: game_analytics_pipeline.ingest_kafka_to_mongodb scheduled__2025-12-25T00:39:00+00:00 [running]> on host e8498d52dcd6
+[2025-12-25T00:40:03.601+0000] {taskinstance.py:1660} INFO - Exporting env vars: AIRFLOW_CTX_DAG_OWNER='game_analytics_team' AIRFLOW_CTX_DAG_ID='game_analytics_pipeline' AIRFLOW_CTX_TASK_ID='ingest_kafka_to_mongodb' AIRFLOW_CTX_EXECUTION_DATE='2025-12-25T00:39:00+00:00' AIRFLOW_CTX_TRY_NUMBER='1' AIRFLOW_CTX_DAG_RUN_ID='scheduled__2025-12-25T00:39:00+00:00'
+[2025-12-25T00:40:04.098+0000] {base.py:73} INFO - Using connection ID 'mongo_default' for task execution.
+[2025-12-25T00:40:04.128+0000] {conn.py:400} INFO - <BrokerConnection client_id=kafka-python-2.3.0, node_id=bootstrap-0 host=kafka:29092 <connecting> [IPv4 ('172.31.0.6', 29092)]>: connecting to kafka:29092 [('172.31.0.6', 29092) IPv4]
+[2025-12-25T00:40:04.137+0000] {conn.py:622} INFO - <BrokerConnection client_id=kafka-python-2.3.0, node_id=bootstrap-0 host=kafka:29092 <checking_api_versions_recv> [IPv4 ('172.31.0.6', 29092)]>: Broker version identified as 2.6
+[2025-12-25T00:40:04.138+0000] {conn.py:461} INFO - <BrokerConnection client_id=kafka-python-2.3.0, node_id=bootstrap-0 host=kafka:29092 <connected> [IPv4 ('172.31.0.6', 29092)]>: Connection complete.
+[2025-12-25T00:40:04.142+0000] {subscription_state.py:181} INFO - Updating subscribed topics to: ('GameAnalytics',)
+[2025-12-25T00:40:04.151+0000] {conn.py:400} INFO - <BrokerConnection client_id=kafka-python-2.3.0, node_id=1 host=kafka:29092 <connecting> [IPv4 ('172.31.0.6', 29092)]>: connecting to kafka:29092 [('172.31.0.6', 29092) IPv4]
+[2025-12-25T00:40:04.152+0000] {conn.py:461} INFO - <BrokerConnection client_id=kafka-python-2.3.0, node_id=1 host=kafka:29092 <connected> [IPv4 ('172.31.0.6', 29092)]>: Connection complete.
+[2025-12-25T00:40:04.153+0000] {conn.py:951} INFO - <BrokerConnection client_id=kafka-python-2.3.0, node_id=bootstrap-0 host=kafka:29092 <connected> [IPv4 ('172.31.0.6', 29092)]>: Closing connection. 
+[2025-12-25T00:40:04.257+0000] {cluster.py:403} INFO - Coordinator for group/airflow_ingestion is ('coordinator-1', 'kafka', 29092, None)
+[2025-12-25T00:40:04.258+0000] {base.py:835} INFO - Discovered coordinator coordinator-1 for group airflow_ingestion
+[2025-12-25T00:40:04.258+0000] {base.py:895} INFO - Starting new heartbeat thread
+[2025-12-25T00:40:04.262+0000] {consumer.py:379} INFO - Revoking previously assigned partitions () for group airflow_ingestion
+[2025-12-25T00:40:04.262+0000] {base.py:433} INFO - Failed to join group airflow_ingestion: NodeNotReadyError: coordinator-1
+[2025-12-25T00:40:04.263+0000] {conn.py:400} INFO - <BrokerConnection client_id=kafka-python-2.3.0, node_id=coordinator-1 host=kafka:29092 <connecting> [IPv4 ('172.31.0.6', 29092)]>: connecting to kafka:29092 [('172.31.0.6', 29092) IPv4]
+[2025-12-25T00:40:04.264+0000] {conn.py:461} INFO - <BrokerConnection client_id=kafka-python-2.3.0, node_id=coordinator-1 host=kafka:29092 <connected> [IPv4 ('172.31.0.6', 29092)]>: Connection complete.
+[2025-12-25T00:40:04.365+0000] {base.py:546} INFO - (Re-)joining group airflow_ingestion
+[2025-12-25T00:40:04.367+0000] {base.py:661} INFO - Received member id kafka-python-2.3.0-22311284-164d-4d06-9ceb-f4eb80a3e4f0 for group airflow_ingestion; will retry join-group
+[2025-12-25T00:40:04.367+0000] {base.py:433} INFO - Failed to join group airflow_ingestion: [Error 79] MemberIdRequiredError
+[2025-12-25T00:40:04.368+0000] {base.py:546} INFO - (Re-)joining group airflow_ingestion
+[2025-12-25T00:40:07.372+0000] {base.py:617} INFO - Successfully joined group airflow_ingestion <Generation 4 (member_id: kafka-python-2.3.0-22311284-164d-4d06-9ceb-f4eb80a3e4f0, protocol: range)>
+[2025-12-25T00:40:07.373+0000] {base.py:619} INFO - Elected group leader -- performing partition assignments using range
+[2025-12-25T00:40:07.377+0000] {subscription_state.py:254} INFO - Updated partition assignment: [('GameAnalytics', 0)]
+[2025-12-25T00:40:07.377+0000] {consumer.py:260} INFO - Setting newly assigned partitions (('GameAnalytics', 0),) for group airflow_ingestion
+[2025-12-25T00:40:07.381+0000] {fetcher.py:418} INFO - Resetting offset for partition ('GameAnalytics', 0) to offset 0.
+[2025-12-25T00:40:07.444+0000] {taskinstance.py:1943} ERROR - Task failed with exception
+Traceback (most recent call last):
+  File "/home/airflow/.local/lib/python3.11/site-packages/airflow/operators/python.py", line 192, in execute
+    return_value = self.execute_callable()
+                   ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/airflow/.local/lib/python3.11/site-packages/airflow/operators/python.py", line 209, in execute_callable
+    return self.python_callable(*self.op_args, **self.op_kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/airflow/dags/game_analytics_dag.py", line 192, in ingest_kafka_to_mongo
+    db['sessions'].insert_one(event)
+  File "/home/airflow/.local/lib/python3.11/site-packages/pymongo/collection.py", line 639, in insert_one
+    self._insert_one(
+  File "/home/airflow/.local/lib/python3.11/site-packages/pymongo/collection.py", line 579, in _insert_one
+    self.__database.client._retryable_write(acknowledged, _insert_command, session)
+  File "/home/airflow/.local/lib/python3.11/site-packages/pymongo/mongo_client.py", line 1493, in _retryable_write
+    return self._retry_with_session(retryable, func, s, None)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/airflow/.local/lib/python3.11/site-packages/pymongo/mongo_client.py", line 1360, in _retry_with_session
+    return self._retry_internal(retryable, func, session, bulk)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/airflow/.local/lib/python3.11/site-packages/pymongo/_csot.py", line 106, in csot_wrapper
+    return func(self, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/airflow/.local/lib/python3.11/site-packages/pymongo/mongo_client.py", line 1401, in _retry_internal
+    return func(session, sock_info, retryable)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/airflow/.local/lib/python3.11/site-packages/pymongo/collection.py", line 577, in _insert_command
+    _check_write_command_response(result)
+  File "/home/airflow/.local/lib/python3.11/site-packages/pymongo/helpers.py", line 230, in _check_write_command_response
+    _raise_last_write_error(write_errors)
+  File "/home/airflow/.local/lib/python3.11/site-packages/pymongo/helpers.py", line 202, in _raise_last_write_error
+    raise DuplicateKeyError(error.get("errmsg"), 11000, error)
+pymongo.errors.DuplicateKeyError: E11000 duplicate key error collection: game_analytics.sessions index: session_id_1 dup key: { : "3f061d3f-b812-4dee-94a5-5c5f3db4dec5" }, full error: {'index': 0, 'code': 11000, 'errmsg': 'E11000 duplicate key error collection: game_analytics.sessions index: session_id_1 dup key: { : "3f061d3f-b812-4dee-94a5-5c5f3db4dec5" }'}
+[2025-12-25T00:40:07.466+0000] {taskinstance.py:1400} INFO - Marking task as UP_FOR_RETRY. dag_id=game_analytics_pipeline, task_id=ingest_kafka_to_mongodb, execution_date=20251225T003900, start_date=20251225T004003, end_date=20251225T004007
+[2025-12-25T00:40:07.485+0000] {standard_task_runner.py:104} ERROR - Failed to execute job 28 for task ingest_kafka_to_mongodb (E11000 duplicate key error collection: game_analytics.sessions index: session_id_1 dup key: { : "3f061d3f-b812-4dee-94a5-5c5f3db4dec5" }, full error: {'index': 0, 'code': 11000, 'errmsg': 'E11000 duplicate key error collection: game_analytics.sessions index: session_id_1 dup key: { : "3f061d3f-b812-4dee-94a5-5c5f3db4dec5" }'}; 406)
+[2025-12-25T00:40:07.521+0000] {local_task_job_runner.py:228} INFO - Task exited with return code 1
+[2025-12-25T00:40:07.569+0000] {taskinstance.py:2784} INFO - 0 downstream tasks scheduled from follow-on schedule check

@@ -110,7 +110,7 @@ async def consume_kafka():
                             playtime_session=payload.get("playtime_session"),
                             playtime_total=payload.get("playtime_total"),
                         )
-                        print(f'Added new metric to session {new_metric}')
+                        # print(f'Added new metric to session {new_metric}')
                         session.add(new_metric)
                     # Commit happens automatically on exit of session.begin() block if no error
                 

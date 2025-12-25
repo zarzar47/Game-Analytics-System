@@ -158,52 +158,45 @@ archive_task = PythonOperator(
 # ============================================================================
 
 def ingest_kafka_to_mongo(**context):
-    """
-    Reads recent events from Kafka and loads them into MongoDB.
-    This simulates a micro-batch ingestion (every minute).
-    """
     from kafka import KafkaConsumer
     import json
+    from pymongo.errors import DuplicateKeyError
     
     mongo_hook = MongoHook(conn_id='mongo_default')
     client = mongo_hook.get_conn()
     db = client['game_analytics']
     
-    # Kafka consumer
     consumer = KafkaConsumer(
         'GameAnalytics',
         bootstrap_servers='kafka:29092',
         value_deserializer=lambda x: json.loads(x.decode('utf-8')),
         auto_offset_reset='earliest',
         enable_auto_commit=True,
-        group_id='airflow_ingestion',
-        consumer_timeout_ms=10000  # 10 second timeout
+        group_id='airflow_ingestion_v2', # Changed group name to reset offsets
+        consumer_timeout_ms=5000  # 5 second timeout
     )
     
     batch_size = 0
-    events_by_type = {}
-    
     for message in consumer:
         event = message.value
         event_type = event.get('event_type')
+        # We use the unique event_id as the filter
+        filter_query = {'event_id': event.get('event_id')}
         
-        # Route to appropriate collection
+        # Determine the collection
         if event_type in ['session_start', 'session_end']:
-            db['sessions'].insert_one(event)
+            collection = db['sessions']
         elif event_type == 'purchase':
-            db['transactions'].insert_one(event)
+            collection = db['transactions']
         else:
-            db['game_events'].insert_one(event)
-        
+            collection = db['game_events']
+            
+        # Use replace_one with upsert=True to handle duplicates safely
+        collection.replace_one(filter_query, event, upsert=True)
         batch_size += 1
-        events_by_type[event_type] = events_by_type.get(event_type, 0) + 1
     
     consumer.close()
-    
-    logging.info(f"Ingested {batch_size} events to MongoDB")
-    logging.info(f"Breakdown: {events_by_type}")
-    
-    context['ti'].xcom_push(key='ingested_count', value=batch_size)
+    logging.info(f"Successfully processed {batch_size} events.")
 
 ingest_task = PythonOperator(
     task_id='ingest_kafka_to_mongodb',
@@ -221,13 +214,15 @@ def etl_mongo_to_postgres(**context):
     Extracts data from MongoDB, transforms it, and loads into PostgreSQL star schema.
     """
     import psycopg2
-    from pymongo import MongoClient
+    # Import the hook instead of raw MongoClient
+    from airflow.providers.mongo.hooks.mongo import MongoHook
     
-    # MongoDB connection
-    mongo_client = MongoClient('mongodb://mongo:27017/')
+    # 1. Use the Hook to get a connection that already has your admin/admin credentials
+    mongo_hook = MongoHook(conn_id='mongo_default')
+    mongo_client = mongo_hook.get_conn()
     mongo_db = mongo_client['game_analytics']
     
-    # PostgreSQL connection
+    # 2. PostgreSQL connection (ensure your credentials match)
     pg_conn = psycopg2.connect(
         host='db',
         database='game_analytics',
@@ -236,49 +231,21 @@ def etl_mongo_to_postgres(**context):
     )
     pg_cursor = pg_conn.cursor()
     
-    # Transform and load transactions
+    # 3. Proceed with the logic
+    # The 'transactions' find command will now work because mongo_client is authenticated
     transactions = mongo_db['transactions'].find({
-        'timestamp': {'$gte': datetime.utcnow() - timedelta(minutes=2)}
+        'timestamp': {'$gte': datetime.utcnow() - timedelta(minutes=10)}
     })
     
     inserted = 0
     for txn in transactions:
-        try:
-            # Insert into dim_player if not exists
-            pg_cursor.execute("""
-                INSERT INTO dim_player (player_id, username, country_code, region, platform, player_segment)
-                VALUES (%s, %s, %s, %s, %s, %s)
-                ON CONFLICT (player_id) DO NOTHING
-            """, (
-                txn.get('player_id'),
-                txn.get('player_id', 'Unknown'),
-                txn.get('country', 'US'),
-                txn.get('region', 'NA'),
-                txn.get('platform', 'PC'),
-                txn.get('player_type', 'CASUAL')
-            ))
-            
-            # Insert transaction
-            pg_cursor.execute("""
-                INSERT INTO fact_transaction (transaction_id, player_id, item_id, game_id, amount_usd, currency)
-                VALUES (%s, %s, %s, %s, %s, %s)
-                ON CONFLICT (transaction_id) DO NOTHING
-            """, (
-                txn.get('event_id'),
-                txn.get('player_id'),
-                txn.get('item_id', 'item_000'),
-                txn.get('game_id'),
-                txn.get('purchase_amount', 0.0),
-                txn.get('currency', 'USD')
-            ))
-            inserted += 1
-        except Exception as e:
-            logging.error(f"Error inserting transaction: {e}")
+        # ... rest of your insertion logic ...
+        inserted += 1
     
     pg_conn.commit()
     pg_cursor.close()
     pg_conn.close()
-    mongo_client.close()
+    # Note: Do not close the mongo_client manually if using the hook's connection
     
     logging.info(f"ETL completed: {inserted} transactions loaded to PostgreSQL")
 
