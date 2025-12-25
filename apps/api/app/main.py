@@ -1,37 +1,15 @@
-from fastapi import FastAPI, Depends, HTTPException, Query
+from fastapi import FastAPI, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List
-from .database import get_db, AsyncSessionLocal, engine, Base
-from .models import GameMetric, RealtimeRevenue, RealtimeConcurrency, RealtimePerformance
+from .database import get_db, AsyncSessionLocal
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, text
-from sqlalchemy.sql import func
 from game_library import get_games
-from aiokafka import AIOKafkaConsumer
-import asyncio
-import json
-import os
 import datetime
-from dateutil import parser
 
-app = FastAPI(title="Game Analytics Core")
-
-# --- KAFKA CONFIG ---
-KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:29092")
-TOPIC_NAME = "GameAnalytics"
+app = FastAPI(title="Game Analytics API - Star Schema")
 
 # --- DATA MODELS ---
-class GameEvent(BaseModel):
-    game_id: str
-    event_type: str
-    game_name: Optional[str] = None
-    player_count: Optional[int] = None
-    sentiment_score: Optional[float] = None
-    review_text: Optional[str] = None
-    playtime_session: Optional[float] = None
-    playtime_total: Optional[float] = None
-    purchase_amount: Optional[float] = None
-    timestamp: Optional[float] = None
 
 class GameInfo(BaseModel):
     id: str
@@ -39,200 +17,327 @@ class GameInfo(BaseModel):
     cover_url: str
     tags: List[str]
 
-class HistoricalMetric(BaseModel):
+class StarSchemaMetrics(BaseModel):
+    """Aggregated metrics from star schema"""
+    game_name: str
+    total_players: int
+    total_revenue: float
+    avg_session_duration: float
+    total_sessions: int
+    avg_fps: Optional[float] = None
+    avg_latency: Optional[float] = None
+
+class PlayerSegmentRevenue(BaseModel):
+    player_segment: str
+    total_revenue: float
+    avg_purchase: float
+    purchase_count: int
+
+class RegionalPerformance(BaseModel):
+    region: str
+    concurrent_players: int
+    avg_fps: float
+    avg_latency: float
+
+class TimeSeriesData(BaseModel):
     timestamp: datetime.datetime
-    player_count: Optional[int]
-    sentiment_score: Optional[float]
-    purchase_amount: Optional[float]
+    metric_value: float
 
-# --- BACKGROUND TASK ---
-async def consume_kafka():
-    """Background task to consume Kafka messages and save to DB."""
-    while True:
-        print("Starting Kafka Consumer Background Task...")
-        consumer = AIOKafkaConsumer(
-            TOPIC_NAME,
-            bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
-            group_id="api-db-worker",
-            value_deserializer=lambda x: json.loads(x.decode('utf-8'))
-        )
-        
-        try:
-            await consumer.start()
-            print("API Consumer Connected to Kafka")
-            async for msg in consumer:
-                payload = msg.value
-                
-                async with AsyncSessionLocal() as session:
-                    async with session.begin():
-                        # Parse timestamp
-                        ts = None
-                        if payload.get("timestamp"):
-                            try:
-                                # This handles both ISO strings and Unix epochs
-                                if isinstance(payload["timestamp"], (int, float)):
-                                    ts = datetime.datetime.fromtimestamp(payload["timestamp"])
-                                else:
-                                    ts = parser.parse(payload["timestamp"])
-                            except:
-                                ts = datetime.datetime.utcnow()
+# --- HEALTH CHECK ---
 
-                        new_metric = GameMetric(
-                            # Base
-                            game_id=payload.get("game_id"),
-                            game_name=payload.get("game_name"),
-                            event_type=payload.get("event_type"),
-                            timestamp=ts,
-                            
-                            # Player & Session
-                            player_id=payload.get("player_id"),
-                            session_id=payload.get("session_id"),
-                            match_id=payload.get("match_id"),
-                            region=payload.get("region"),
-                            platform=payload.get("platform"),
-                            player_type=payload.get("player_type"),
-                            country=payload.get("country"),
-
-                            # Gameplay & Performance
-                            player_count=payload.get("player_count"),
-                            sentiment_score=payload.get("sentiment_score"),
-                            review_text=payload.get("review_text"),
-                            level=payload.get("level"),
-                            fps=payload.get("fps"),
-                            latency_ms=payload.get("latency_ms"),
-
-                            # Monetization
-                            purchase_amount=payload.get("purchase_amount"),
-                            currency=payload.get("currency"),
-                            item_id=payload.get("item_id"),
-
-                            # Legacy - not in faker, but in model
-                            playtime_session=payload.get("playtime_session"),
-                            playtime_total=payload.get("playtime_total"),
-                        )
-                        # print(f'Added new metric to session {new_metric}')
-                        session.add(new_metric)
-                    # Commit happens automatically on exit of session.begin() block if no error
-                
-                # print(f"DB STORE: {payload.get('event_type')} for {payload.get('game_id')}")
-        except Exception as e:
-            print(f"Kafka Consumer Error: {e}. Reconnecting in 5s...")
-            await asyncio.sleep(5) # Wait before retrying
-        finally:
-            await consumer.stop()
-
-@app.on_event("startup")
-async def startup_event():
-    # Create Tables
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-        
-    # Run consumer in background
-    asyncio.create_task(consume_kafka())
-
-# --- ENDPOINTS ---
 @app.get("/health")
 def health_check():
-    return {"status": "operational", "service": "api"}
+    return {"status": "operational", "service": "star-schema-api"}
+
+# --- GAME LIST ---
 
 @app.get("/games", response_model=List[GameInfo])
 def list_games():
     return get_games()
 
-@app.get("/games/{game_id}/history", response_model=List[HistoricalMetric])
-async def get_game_history(
+# ============================================================================
+# STAR SCHEMA ANALYTICS ENDPOINTS
+# ============================================================================
+
+@app.get("/analytics/star-schema/overview/{game_id}")
+async def get_game_overview(game_id: str, db: AsyncSession = Depends(get_db)):
+    """
+    Get comprehensive overview for a game using star schema joins.
+    Demonstrates: Multiple JOINS, GROUP BY, Aggregations
+    """
+    query = text("""
+        WITH player_metrics AS (
+            SELECT 
+                dg.game_name,
+                COUNT(DISTINCT fs.player_id) as total_players,
+                AVG(fs.duration_seconds) as avg_session_duration,
+                COUNT(fs.session_id) as total_sessions
+            FROM fact_session fs
+            JOIN dim_game dg ON fs.game_id = dg.game_id
+            WHERE dg.game_id = :game_id
+            GROUP BY dg.game_name
+        ),
+        revenue_metrics AS (
+            SELECT 
+                SUM(ft.amount_usd) as total_revenue
+            FROM fact_transaction ft
+            WHERE ft.game_id = :game_id
+        ),
+        performance_metrics AS (
+            SELECT 
+                AVG(ftel.fps) as avg_fps,
+                AVG(ftel.latency_ms) as avg_latency
+            FROM fact_telemetry ftel
+            WHERE ftel.game_id = :game_id
+        )
+        SELECT 
+            pm.game_name,
+            pm.total_players,
+            COALESCE(rm.total_revenue, 0) as total_revenue,
+            pm.avg_session_duration,
+            pm.total_sessions,
+            perf.avg_fps,
+            perf.avg_latency
+        FROM player_metrics pm
+        CROSS JOIN revenue_metrics rm
+        CROSS JOIN performance_metrics perf
+    """)
+    
+    try:
+        result = await db.execute(query, {"game_id": game_id})
+        row = result.fetchone()
+        
+        if not row:
+            raise HTTPException(status_code=404, detail=f"No data found for game {game_id}")
+        
+        return StarSchemaMetrics(
+            game_name=row[0],
+            total_players=row[1] or 0,
+            total_revenue=float(row[2] or 0),
+            avg_session_duration=float(row[3] or 0),
+            total_sessions=row[4] or 0,
+            avg_fps=float(row[5]) if row[5] else None,
+            avg_latency=float(row[6]) if row[6] else None
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+@app.get("/analytics/star-schema/revenue-by-segment/{game_id}")
+async def get_revenue_by_player_segment(game_id: str, db: AsyncSession = Depends(get_db)):
+    """
+    Revenue breakdown by player segment (CASUAL, HARDCORE, WHALE).
+    Demonstrates: JOIN, GROUP BY, HAVING, Aggregations
+    """
+    query = text("""
+        SELECT 
+            dp.player_segment,
+            SUM(ft.amount_usd) as total_revenue,
+            AVG(ft.amount_usd) as avg_purchase,
+            COUNT(ft.transaction_id) as purchase_count
+        FROM fact_transaction ft
+        JOIN dim_player dp ON ft.player_id = dp.player_id
+        WHERE ft.game_id = :game_id
+        GROUP BY dp.player_segment
+        HAVING SUM(ft.amount_usd) > 0
+        ORDER BY total_revenue DESC
+    """)
+    
+    try:
+        result = await db.execute(query, {"game_id": game_id})
+        rows = result.fetchall()
+        
+        return [
+            PlayerSegmentRevenue(
+                player_segment=row[0],
+                total_revenue=float(row[1]),
+                avg_purchase=float(row[2]),
+                purchase_count=row[3]
+            )
+            for row in rows
+        ]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+@app.get("/analytics/star-schema/regional-performance/{game_id}")
+async def get_regional_performance(game_id: str, db: AsyncSession = Depends(get_db)):
+    """
+    Performance metrics by region.
+    Demonstrates: Multiple JOINs, Aggregations, Geography dimension usage
+    """
+    query = text("""
+        SELECT 
+            ftel.region,
+            COUNT(DISTINCT fs.player_id) as concurrent_players,
+            AVG(ftel.fps) as avg_fps,
+            AVG(ftel.latency_ms) as avg_latency
+        FROM fact_telemetry ftel
+        JOIN fact_session fs ON ftel.session_id = fs.session_id
+        WHERE ftel.game_id = :game_id
+        GROUP BY ftel.region
+        ORDER BY concurrent_players DESC
+    """)
+    
+    try:
+        result = await db.execute(query, {"game_id": game_id})
+        rows = result.fetchall()
+        
+        return [
+            RegionalPerformance(
+                region=row[0],
+                concurrent_players=row[1],
+                avg_fps=float(row[2]) if row[2] else 0.0,
+                avg_latency=float(row[3]) if row[3] else 0.0
+            )
+            for row in rows
+        ]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+@app.get("/analytics/star-schema/revenue-timeline/{game_id}")
+async def get_revenue_timeline(
     game_id: str, 
-    hours: int = 24, 
+    hours: int = 24,
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Fetch historical data for charts. 
-    Currently returns raw data points for player_count and sentiment.
+    Revenue over time using dim_time.
+    Demonstrates: Time dimension joins, WHERE filtering, Time-based aggregation
     """
-    cutoff = datetime.datetime.now() - datetime.timedelta(hours=hours)
+    query = text("""
+        SELECT 
+            dt.timestamp,
+            SUM(ft.amount_usd) as total_revenue
+        FROM fact_transaction ft
+        JOIN dim_time dt ON ft.time_id = dt.time_id
+        WHERE ft.game_id = :game_id
+        AND dt.timestamp >= NOW() - INTERVAL ':hours hours'
+        GROUP BY dt.timestamp
+        ORDER BY dt.timestamp ASC
+    """)
     
-    # We want status updates mainly for the charts
-    query = (
-        select(GameMetric)
-        .where(GameMetric.game_id == game_id)
-        .where(GameMetric.timestamp >= cutoff)
-        .where(GameMetric.event_type == "status")
-        .order_by(GameMetric.timestamp.asc())
-    )
+    try:
+        result = await db.execute(query, {"game_id": game_id, "hours": hours})
+        rows = result.fetchall()
+        
+        return [
+            TimeSeriesData(
+                timestamp=row[0],
+                metric_value=float(row[1])
+            )
+            for row in rows
+        ]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+@app.get("/analytics/star-schema/top-spenders/{game_id}")
+async def get_top_spenders(
+    game_id: str,
+    limit: int = 10,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Top spending players with their details.
+    Demonstrates: Complex JOIN, Aggregation, ORDER BY, LIMIT
+    """
+    query = text("""
+        SELECT 
+            dp.username,
+            dp.player_segment,
+            dp.region,
+            dp.platform,
+            COUNT(ft.transaction_id) as purchase_count,
+            SUM(ft.amount_usd) as total_spent
+        FROM fact_transaction ft
+        JOIN dim_player dp ON ft.player_id = dp.player_id
+        WHERE ft.game_id = :game_id
+        GROUP BY dp.player_id, dp.username, dp.player_segment, dp.region, dp.platform
+        ORDER BY total_spent DESC
+        LIMIT :limit
+    """)
     
-    result = await db.execute(query)
-    records = result.scalars().all()
+    try:
+        result = await db.execute(query, {"game_id": game_id, "limit": limit})
+        rows = result.fetchall()
+        
+        return [
+            {
+                "username": row[0],
+                "player_segment": row[1],
+                "region": row[2],
+                "platform": row[3],
+                "purchase_count": row[4],
+                "total_spent": float(row[5])
+            }
+            for row in rows
+        ]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+@app.get("/analytics/star-schema/weekend-vs-weekday/{game_id}")
+async def get_weekend_vs_weekday_metrics(game_id: str, db: AsyncSession = Depends(get_db)):
+    """
+    Compare weekend vs weekday revenue and sessions.
+    Demonstrates: Time dimension (is_weekend), CASE statements, Aggregations
+    """
+    query = text("""
+        SELECT 
+            CASE WHEN dt.is_weekend THEN 'Weekend' ELSE 'Weekday' END as period_type,
+            COUNT(DISTINCT fs.session_id) as total_sessions,
+            AVG(fs.duration_seconds) as avg_session_duration,
+            SUM(ft.amount_usd) as total_revenue
+        FROM fact_session fs
+        JOIN dim_time dt ON fs.start_time_id = dt.time_id
+        LEFT JOIN fact_transaction ft ON fs.session_id = ft.session_id
+        WHERE fs.game_id = :game_id
+        GROUP BY dt.is_weekend
+    """)
     
-    return [
-        HistoricalMetric(
-            timestamp=r.timestamp,
-            player_count=r.player_count,
-            sentiment_score=r.sentiment_score,
-            purchase_amount=r.purchase_amount
-        )
-        for r in records
-    ]
+    try:
+        result = await db.execute(query, {"game_id": game_id})
+        rows = result.fetchall()
+        
+        return [
+            {
+                "period": row[0],
+                "sessions": row[1],
+                "avg_duration": float(row[2]) if row[2] else 0.0,
+                "revenue": float(row[3]) if row[3] else 0.0
+            }
+            for row in rows
+        ]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+# ============================================================================
+# LEGACY SPARK ENDPOINTS (Keep for backward compatibility)
+# ============================================================================
 
 @app.get("/analytics/revenue")
 async def get_spark_revenue(db: AsyncSession = Depends(get_db)):
-    # 1. Wrap the string in text()
-    query = text("""
-        SELECT * FROM (
-            SELECT *, ROW_NUMBER() OVER(PARTITION BY game_name, player_type ORDER BY window_start DESC) as rn
-            FROM realtime_revenue
-        ) AS ranked
-        WHERE rn = 1;
-    """)    
-    
+    """Legacy Spark endpoint"""
+    query = text("SELECT * FROM realtime_revenue ORDER BY window_start DESC LIMIT 100")
     try:
         result = await db.execute(query)
-        # 2. Convert result rows to dictionaries for JSON response
         return [dict(row._mapping) for row in result]
     except Exception as e:
-        if "does not exist" in str(e):
-             raise HTTPException(status_code=404, detail=f"Table realtime_revenue not found. Spark job may not have run yet.")
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+        return []
 
 @app.get("/analytics/concurrency")
 async def get_spark_concurrency(db: AsyncSession = Depends(get_db)):
-    query = text("""
-        SELECT * FROM (
-            SELECT *, ROW_NUMBER() OVER(PARTITION BY game_name, region ORDER BY window_start DESC) as rn
-            FROM realtime_concurrency
-        ) AS ranked
-        WHERE rn = 1;
-    """)
+    """Legacy Spark endpoint"""
+    query = text("SELECT * FROM realtime_concurrency ORDER BY window_start DESC LIMIT 100")
     try:
         result = await db.execute(query)
-        print(result)
         return [dict(row._mapping) for row in result]
     except Exception as e:
-        if "does not exist" in str(e):
-             raise HTTPException(status_code=404, detail=f"Table realtime_concurrency not found. Spark job may not have run yet.")
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
-
+        return []
 
 @app.get("/analytics/performance")
 async def get_spark_performance(db: AsyncSession = Depends(get_db)):
-    query = text("""
-        SELECT * FROM (
-            SELECT *, ROW_NUMBER() OVER(PARTITION BY game_name, platform, region ORDER BY window_start DESC) as rn
-            FROM realtime_performance
-        ) AS ranked
-        WHERE rn = 1;
-    """)
+    """Legacy Spark endpoint"""
+    query = text("SELECT * FROM realtime_performance ORDER BY window_start DESC LIMIT 100")
     try:
         result = await db.execute(query)
         return [dict(row._mapping) for row in result]
     except Exception as e:
-        if "does not exist" in str(e):
-             raise HTTPException(status_code=404, detail=f"Table realtime_performance not found. Spark job may not have run yet.")
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
-
-@app.post("/internal/ingest", status_code=201)
-async def ingest_metrics(payload: GameEvent, db: AsyncSession = Depends(get_db)):
-    """
-    Legacy HTTP endpoint.
-    """
-    print(f"HTTP INGEST: {payload.game_id}")
-    return {"msg": "Data received"}
+        return []
