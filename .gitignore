@@ -28,3 +28,4 @@ Thumbs.db
 
 # Supabase / Local
 airflow/logs/*
+GEMINI.md
