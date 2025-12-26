@@ -351,7 +351,7 @@ def generate_fake_data():
     games = get_games()
     
     # Initialize Population
-    population_size = 500
+    population_size = 2000
     players = [EnhancedMarkovPlayer(games) for _ in range(population_size)]
     print(f"✅ Initialized Enhanced Markov Population of {population_size} players")
     print(f"📊 Generating data for Star Schema: dim_player, dim_game, dim_time, dim_geography, dim_item")
@@ -371,7 +371,7 @@ def generate_fake_data():
         
         # Login Logic
         if len(active_players) < target_active and offline_players:
-            num_to_login = min(5, target_active - len(active_players))
+            num_to_login = min(20, target_active - len(active_players))
             for _ in range(num_to_login):
                 p = random.choice(offline_players)
                 evt = p.login()
@@ -386,7 +386,7 @@ def generate_fake_data():
         if tick_count % 10 == 0:
             print(f"🎮 Active Players: {len(active_players)}/{population_size} | Tick: {tick_count}")
         
-        time.sleep(1)
+        time.sleep(0.2)
 
 if __name__ == "__main__":
     print("=" * 80)
