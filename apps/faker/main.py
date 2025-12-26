@@ -340,10 +340,10 @@ def get_producer():
                 bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
                 value_serializer=lambda v: json.dumps(v).encode('utf-8')
             )
-            print("✅ Connected to Kafka")
+            print("Connected to Kafka")
             return producer
         except Exception as e:
-            print(f"⏳ Waiting for Kafka: {e}")
+            print(f"Waiting for Kafka: {e}")
             time.sleep(5)
 
 def generate_fake_data():
@@ -353,9 +353,9 @@ def generate_fake_data():
     # Initialize Population
     population_size = 2000
     players = [EnhancedMarkovPlayer(games) for _ in range(population_size)]
-    print(f"✅ Initialized Enhanced Markov Population of {population_size} players")
-    print(f"📊 Generating data for Star Schema: dim_player, dim_game, dim_time, dim_geography, dim_item")
-    print(f"📊 Populating Facts: fact_session, fact_transaction, fact_telemetry, fact_progression, fact_feedback")
+    print(f"Initialized Enhanced Markov Population of {population_size} players")
+    print(f"Generating data for Star Schema: dim_player, dim_game, dim_time, dim_geography, dim_item")
+    print(f"Populating Facts: fact_session, fact_transaction, fact_telemetry, fact_progression, fact_feedback")
 
     # Simulation Loop
     tick_count = 0
@@ -390,6 +390,6 @@ def generate_fake_data():
 
 if __name__ == "__main__":
     print("=" * 80)
-    print("🚀 ENHANCED MARKOV CHAIN GENERATOR FOR STAR SCHEMA")
+    print("ENHANCED MARKOV CHAIN GENERATOR FOR STAR SCHEMA")
     print("=" * 80)
     generate_fake_data()

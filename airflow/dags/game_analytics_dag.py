@@ -70,7 +70,7 @@ def ingest_kafka_to_mongo(**context):
     )
     
     batch_size = 0
-    logging.info("📥 Starting Kafka → MongoDB ingestion...")
+    logging.info("Starting Kafka → MongoDB ingestion...")
 
     for message in consumer:
         event = message.value
@@ -116,7 +116,7 @@ def ingest_kafka_to_mongo(**context):
                 continue
     
     consumer.close()
-    logging.info(f"✅ Ingested {batch_size} events into MongoDB")
+    logging.info(f"Ingested {batch_size} events into MongoDB")
     context['ti'].xcom_push(key='ingested_count', value=batch_size)
 
 ingest_task = PythonOperator(
@@ -422,7 +422,7 @@ def populate_facts(**context):
         
     except Exception as e:
         pg_conn.rollback()
-        logging.error(f"❌ Fact population failed: {e}")
+        logging.error(f"Fact population failed: {e}")
         import traceback
         traceback.print_exc()
         raise
