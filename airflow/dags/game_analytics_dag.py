@@ -481,7 +481,7 @@ def check_mongodb_size(**context):
     logging.info(f"📊 MongoDB Size: {size_mb:.2f} MB")
     context['ti'].xcom_push(key='mongodb_size_mb', value=size_mb)
     
-    if size_mb > 10:
+    if size_mb > 0:
         logging.warning(f"⚠️ MongoDB size ({size_mb:.2f} MB) exceeds 300 MB threshold")
         context['ti'].xcom_push(key='archive_required', value=True)
         return 'archive_to_hadoop'
@@ -525,8 +525,7 @@ def archive_to_hadoop(**context):
     
     hdfs_client = InsecureClient('http://namenode:9870', user='root')
     
-    cutoff_time = datetime.utcnow() - timedelta(hours=24)
-    cutoff_str = cutoff_time.isoformat()
+    cutoff_time = datetime.utcnow() - timedelta(minutes=1)
     
     collections = ['game_events', 'sessions', 'transactions', 'telemetry', 'progression', 'feedback']
     total_archived = 0
@@ -535,7 +534,7 @@ def archive_to_hadoop(**context):
     for collection_name in collections:
         collection = db[collection_name]
         
-        old_docs = list(collection.find({'timestamp': {'$lt': cutoff_str}}))
+        old_docs = list(collection.find({'timestamp': {'$lt': cutoff_time}}))
         
         if not old_docs:
             logging.info(f"ℹ️ No old documents in {collection_name}")

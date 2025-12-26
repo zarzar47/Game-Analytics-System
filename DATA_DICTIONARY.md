@@ -9,81 +9,102 @@
 
 ## Big Data Schema (Star Schema for Analytics)
 
-### Fact Tables (Streams)
-
-#### 1. Fact_Session_Activity
-Tracks the lifecycle of player sessions.
-- `session_id` (UUID): Unique session identifier.
-- `player_id` (UUID): Foreign Key to Dim_Player.
-- `game_id` (String): Foreign Key to Dim_Game.
-- `start_time` (Timestamp): Session start.
-- `end_time` (Timestamp): Session end.
-- `duration_sec` (Float): Total duration.
-- `termination_reason` (String): 'user_quit', 'crash', 'timeout'.
-
-#### 2. Fact_Telemetry (Heartbeats)
-High-frequency performance data (sampled every 5s).
-- `event_id` (UUID)
-- `session_id` (UUID)
-- `timestamp` (Timestamp)
-- `fps` (Float): Frames Per Second.
-- `latency_ms` (Int): Network latency.
-- `cpu_usage` (Float): Client device load.
-
-#### 3. Fact_Transactions
-In-game purchases.
-- `transaction_id` (UUID)
-- `session_id` (UUID)
-- `player_id` (UUID)
-- `item_id` (String): Foreign Key to Dim_Item.
-- `amount_usd` (Float): Real money value.
-- `currency` (String): 'USD', 'EUR'.
-
-#### 4. Fact_Progression
-Player leveling events.
-- `event_id` (UUID)
-- `session_id` (UUID)
-- `level_index` (Int): New level reached.
-- `xp_gained` (Int).
-
-#### 5. Fact_Feedback
-User reviews and sentiment.
-- `review_id` (UUID)
-- `player_id` (UUID)
-- `sentiment_score` (Float): 0.0 (Negative) to 1.0 (Positive).
-- `text` (String): Raw review text.
+This schema is implemented in the PostgreSQL database and represents the data available for querying by the backend API.
 
 ### Dimension Tables
 
-#### Dim_Player
-- `player_id` (PK)
-- `username`
-- `country_code`
-- `region` (Derived: NA, EU, ASIA)
-- `platform` (PC, PS5, Mobile)
-- `player_segment` (Casual, Hardcore, Whale) - *Slowly Changing Dimension*
+#### 1. Dim_Player
+Stores information about individual players.
+- `player_id` (PK, VARCHAR): Unique identifier for each player.
+- `username` (VARCHAR): The player's username.
+- `country_code` (VARCHAR): Two-letter country code (e.g., 'US', 'GB').
+- `region` (VARCHAR): Geographic region (e.g., 'NA', 'EU', 'ASIA').
+- `platform` (VARCHAR): The platform the player uses (e.g., 'PC', 'PS5', 'Mobile').
+- `player_segment` (VARCHAR): Player archetype (e.g., 'CASUAL', 'HARDCORE', 'WHALE'). *Slowly Changing Dimension.*
+- `registration_date` (TIMESTAMP): When the player first registered.
+- `last_login` (TIMESTAMP): The last time the player logged in.
+- `is_active` (BOOLEAN): Whether the player's account is currently active.
 
-#### Dim_Game
-- `game_id` (PK)
-- `name`
-- `genre`
-- `developer`
-- `release_date`
+#### 2. Dim_Game
+Stores information about the games.
+- `game_id` (PK, VARCHAR): Unique identifier for each game.
+- `game_name` (VARCHAR): The name of the game.
+- `genre` (VARCHAR): The game's genre (e.g., 'RPG', 'Shooter').
+- `developer` (VARCHAR): The company that developed the game.
 
-#### Dim_Time (Derived)
-- `hour`, `day`, `month`, `is_weekend`
+#### 3. Dim_Time
+Provides temporal context for events, allowing for time-based analysis.
+- `time_id` (PK, SERIAL): Unique identifier for each time record.
+- `timestamp` (TIMESTAMP): The specific timestamp.
+- `hour` (INT): The hour of the day (0-23).
+- `day` (INT): The day of the month.
+- `month` (INT): The month of the year.
+- `year` (INT): The year.
+- `day_of_week` (VARCHAR): The name of the day (e.g., 'Monday').
+- `is_weekend` (BOOLEAN): True if the day is a Saturday or Sunday.
+
+#### 4. Dim_Geography
+Maps country codes to larger regions.
+- `geo_id` (PK, SERIAL): Unique identifier for the geography record.
+- `country_code` (VARCHAR): Two-letter country code.
+- `region` (VARCHAR): The associated region.
+
+#### 5. Dim_Item
+Stores information about in-game items available for purchase.
+- `item_id` (PK, VARCHAR): Unique identifier for the item.
+- `item_name` (VARCHAR): The name of the item.
+- `category` (VARCHAR): The item's category (e.g., 'Weapon', 'Cosmetic').
+- `base_price` (DECIMAL): The base price of the item in USD.
+
+### Fact Tables
+
+#### 1. Fact_Session
+Tracks player session lifecycle.
+- `session_id` (PK, VARCHAR): Unique identifier for the session.
+- `player_id` (FK, VARCHAR): Foreign key to `dim_player`.
+- `game_id` (FK, VARCHAR): Foreign key to `dim_game`.
+- `start_time_id` (FK, INT): Foreign key to `dim_time`, marking the session start.
+- `duration_seconds` (DECIMAL): The total duration of the session in seconds.
+
+#### 2. Fact_Transaction
+Records in-game purchases.
+- `transaction_id` (PK, VARCHAR): Unique identifier for the transaction.
+- `session_id` (VARCHAR): The session in which the transaction occurred. (Relaxed foreign key)
+- `player_id` (FK, VARCHAR): Foreign key to `dim_player`.
+- `game_id` (FK, VARCHAR): Foreign key to `dim_game`.
+- `time_id` (FK, INT): Foreign key to `dim_time`.
+- `amount_usd` (DECIMAL): The value of the transaction in USD.
+- `currency` (VARCHAR): The currency used ('USD').
+
+#### 3. Fact_Telemetry
+High-frequency performance data.
+- `telemetry_id` (PK, BIGSERIAL): Unique identifier for the telemetry event.
+- `session_id` (VARCHAR): The session the telemetry belongs to. (Relaxed foreign key)
+- `game_id` (FK, VARCHAR): Foreign key to `dim_game`.
+- `time_id` (FK, INT): Foreign key to `dim_time`.
+- `fps` (DECIMAL): Client frames per second.
+- `latency_ms` (DECIMAL): Network latency in milliseconds.
+- `platform` (VARCHAR): The player's platform.
+- `region` (VARCHAR): The player's region.
 
 ---
 
-## Archiving Policy
-- **Hot Storage (Kafka/Mongo):** Last 24 hours of raw telemetry.
-- **Warm Storage (Parquet/S3):** Aggregated hourly stats for dashboarding (kept for 1 year).
-- **Cold Archive (Glacier):** Raw logs compressed (kept for 5 years for compliance/deep ML training).
-- **Trigger:** If `hot_storage > 300MB`, rotate oldest segments to S3 Parquet.
+## Untracked Data Streams
 
-## Data Generation Strategy (AI/Statistical)
-The generator uses statistical distributions to mimic real human behavior:
-- **Arrivals:** Sinusoidal daily wave + Random Noise (mimics day/night cycles).
-- **Session Duration:** Log-Normal Distribution (Long tail of hardcore users).
-- **Spending:** Pareto Distribution (80/20 rule - few "Whales" spend the most).
-- **Performance:** Gaussian Distribution (Dependent on Region/Distance).
+The data generator (`faker` service) produces a richer set of events than what is currently loaded into the final PostgreSQL star schema. This additional data is available in the Kafka stream and could be integrated into the analytics database in the future.
+
+- **Player Progression (`level_up` event):**
+  - `level_index` (Int): The new level a player has reached.
+  - `xp_gained` (Int): Experience points gained in the event.
+
+- **Player Feedback (`review` event):**
+  - `review_id` (UUID): Unique identifier for the review.
+  - `sentiment_score` (Float): Calculated sentiment from 0.0 (Negative) to 1.0 (Positive).
+  - `review_text` (String): The raw text of the player's review.
+
+- **Detailed Transaction Data (`purchase` event):**
+  - `item_id` (String): The specific item that was purchased. This data is generated but not loaded into `fact_transaction`.
+
+- **Extended Telemetry (`heartbeat` event):**
+  - `cpu_usage` (Float): Client-side CPU load.
+  - `packet_loss_percent` (Float): Network packet loss.

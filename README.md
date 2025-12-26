@@ -79,6 +79,4 @@ This project is a Turborepo monorepo. You can use the following commands for dev
 *   `npm run dev`: Run all applications in development mode.
 *   `npm run lint`: Lint the codebase.
 
-## Future Roadmap
-
-Check [ROADMAP.md](./ROADMAP.md) for planned features and improvements.
+Built by Syed Rafay Ahmed 27071 and Ali Siddiqi 26902

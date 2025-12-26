@@ -2,25 +2,25 @@
   {
     "id": "101",
     "name": "Valorant",
-    "cover_url": "https://cdn2.steamgriddb.com/thumb/9edb6b9b7fc3b263b86740c635839dc4.jpg",
+    "cover_url": "https://cdn2.steamgriddb.com/thumb/bc01cd86e48b66c85628e7a0375351c2.jpg",
     "tags": ["FPS", "Tactical", "Competitive", "Hero Shooter"]
   },
   {
     "id": "102",
     "name": "Elden Ring",
-    "cover_url": "https://cdn2.steamgriddb.com/thumb/d12b32f52d9c6dfac1162a048744e83f.jpg",
+    "cover_url": "https://cdn2.steamgriddb.com/thumb/9e033c2e725ea9d1b0c9dfa7a1702993.jpg",
     "tags": ["RPG", "Open World", "Souls-like", "Dark Fantasy"]
   },
   {
     "id": "103",
     "name": "Minecraft",
-    "cover_url": "https://cdn2.steamgriddb.com/thumb/a73027901f88055aaa0fd1a9e25d36c7.jpg",
+    "cover_url": "https://cdn2.steamgriddb.com/thumb/e353b610e9ce20f963b4cca5da565605.jpg",
     "tags": ["Sandbox", "Survival", "Multiplayer", "Creative"]
   },
   {
     "id": "104",
     "name": "Stardew Valley",
-    "cover_url": "https://cdn2.steamgriddb.com/thumb/ae3cc6a9c0dfe9bef84a66e311bb779a.jpg",
+    "cover_url": "https://cdn2.steamgriddb.com/thumb/ebd238ffa00d0154ab281a8dc6142866.jpg",
     "tags": ["Simulation", "Farming", "Indie", "RPG"]
   },
   {
@@ -32,61 +32,19 @@
   {
     "id": "106",
     "name": "Grand Theft Auto V",
-    "cover_url": "https://cdn2.steamgriddb.com/thumb/e03c3b4a6c0c2a5d2a33503a005a2789.jpg",
+    "cover_url": "https://cdn2.steamgriddb.com/thumb/9e92c56b07777926189cdffe9110dffd.jpg",
     "tags": ["Action", "Open World", "Multiplayer", "Crime"]
   },
   {
     "id": "107",
     "name": "Red Dead Redemption 2",
-    "cover_url": "https://cdn2.steamgriddb.com/thumb/8d684498335372481b392b21b7d532b2.jpg",
+    "cover_url": "https://cdn2.steamgriddb.com/thumb/6b795829c82629f68861760198267125.jpg",
     "tags": ["Action-Adventure", "Open World", "Western", "Story Rich"]
   },
   {
     "id": "108",
     "name": "Cyberpunk 2077",
-    "cover_url": "https://cdn2.steamgriddb.com/thumb/11e3150b69eb786f1e5d73289fd05f56.jpg",
+    "cover_url": "https://cdn2.steamgriddb.com/thumb/c3a2e37b74855325c31c533419161972.jpg",
     "tags": ["RPG", "Open World", "Sci-Fi", "Cyberpunk"]
-  },
-  {
-    "id": "109",
-    "name": "Overwatch 2",
-    "cover_url": "https://cdn2.steamgriddb.com/thumb/8d8a7c882436858e930de95f68a731e5.jpg",
-    "tags": ["Hero Shooter", "FPS", "Multiplayer", "Team-Based"]
-  },
-  {
-    "id": "110",
-    "name": "League of Legends",
-    "cover_url": "https://cdn2.steamgriddb.com/thumb/e73df01364d9f78f1681283c8a417e4f.jpg",
-    "tags": ["MOBA", "Multiplayer", "Strategy", "Competitive"]
-  },
-  {
-    "id": "111",
-    "name": "Dota 2",
-    "cover_url": "https://cdn2.steamgriddb.com/file/sgdb-cdn/thumb/c51624512ec845f20d6f4551101b0460.jpg",
-    "tags": ["MOBA", "Multiplayer", "Strategy", "Competitive"]
-  },
-  {
-    "id": "112",
-    "name": "Fortnite",
-    "cover_url": "https://cdn2.steamgriddb.com/thumb/43a41a4a159e1903e68074d284a66a12.jpg",
-    "tags": ["Battle Royale", "Shooter", "Multiplayer", "Building"]
-  },
-  {
-    "id": "113",
-    "name": "Apex Legends",
-    "cover_url": "https://cdn2.steamgriddb.com/thumb/5d8b8524e93c834a04f5e08920539958.jpg",
-    "tags": ["Battle Royale", "Hero Shooter", "FPS", "Multiplayer"]
-  },
-  {
-    "id": "114",
-    "name": "Baldur's Gate 3",
-    "cover_url": "https://cdn2.steamgriddb.com/thumb/4c688a22a36b043ec733e8c3b421a1f0.jpg",
-    "tags": ["RPG", "CRPG", "D&D", "Story Rich"]
-  },
-  {
-    "id": "115",
-    "name": "Helldivers 2",
-    "cover_url": "https://cdn2.steamgriddb.com/thumb/e72a71b5333a826477d54005b8bc0093.jpg",
-    "tags": ["Co-op", "Shooter", "Sci-Fi", "Action"]
   }
 ]

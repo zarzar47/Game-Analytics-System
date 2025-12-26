@@ -1,104 +1,89 @@
 #!/bin/bash
 
-echo "=========================================="
-echo "GAME ANALYTICS PIPELINE DIAGNOSTICS"
-echo "=========================================="
-echo ""
+# ==============================================================================
+# Game Analytics System - Diagnostic Script
+# ==============================================================================
+# This script runs a series of checks to diagnose the data flow through the
+# entire ETL pipeline, from data generation to the final database.
+# ==============================================================================
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+# ANSI Color Codes
+BLUE="\033[1;34m"
+GREEN="\033[0;32m"
+YELLOW="\033[0;93m"
+RED="\033[0;31m"
+NC="\033[0m" # No Color
 
-# 1. CHECK KAFKA
-echo "1️⃣  CHECKING KAFKA..."
-echo "   Attempting to consume 5 messages from Kafka..."
-docker exec -it kafka kafka-console-consumer \
+# Helper function to print a formatted header
+print_header() {
+    echo -e "\n${BLUE}=======================================================================${NC}"
+    echo -e "${BLUE}>>> $1${NC}"
+    echo -e "${BLUE}=======================================================================${NC}"
+}
+
+# 1. Check Docker Container Status
+print_header "Checking Docker Container Status"
+docker-compose ps
+
+# 2. Check Faker Logs (Data Generation)
+print_header "Tailing Faker Logs (Checking for data generation)"
+docker-compose logs --tail=10 faker
+
+# 3. Check Kafka Topic (Data Streaming)
+print_header "Inspecting Kafka Topic 'GameAnalytics' (Live data stream)"
+echo -e "${YELLOW}Attempting to read 1 message from the 'GameAnalytics' topic...${NC}"
+docker-compose exec kafka /usr/bin/kafka-console-consumer \
     --bootstrap-server kafka:29092 \
     --topic GameAnalytics \
     --from-beginning \
-    --max-messages 5 \
-    --timeout-ms 10000 2>/dev/null
+    --max-messages 1 \
+    --timeout-ms 5000 || echo -e "${RED}Failed to read from Kafka. Is the faker service running and producing data?${NC}"
 
-if [ $? -eq 0 ]; then
-    echo -e "${GREEN}✅ Kafka is working and has messages${NC}"
-else
-    echo -e "${RED}❌ Kafka has no messages or is not accessible${NC}"
-fi
-echo ""
+# 4. Check MongoDB (Hot Storage)
+print_header "Checking MongoDB - Hot Storage"
+echo -e "${YELLOW}Counting documents in key MongoDB collections...${NC}"
+MONGO_COMMAND="
+db.getSiblingDB('game_analytics');
+print('game_events: ' + db.game_events.count());
+print('sessions: ' + db.sessions.count());
+print('transactions: ' + db.transactions.count());
+"
+docker-compose exec mongo mongo --username admin --password admin --authenticationDatabase admin --quiet --eval "$MONGO_COMMAND"
 
-# 2. CHECK SPARK LOGS
-echo "2️⃣  CHECKING SPARK PROCESSOR LOGS..."
-echo "   Last 30 lines from Spark processor:"
-docker logs --tail 30 spark-processor 2>&1 | grep -E "(Batch|DEBUG|ERROR|rows|✅|❌|⚠️)"
-echo ""
+# 5. Check Airflow Scheduler Logs (ETL Orchestration)
+print_header "Tailing Airflow Scheduler Logs (ETL Task Scheduling)"
+docker-compose logs --tail=15 airflow-scheduler
 
-# 3. CHECK DATABASE TABLES
-echo "3️⃣  CHECKING DATABASE TABLES..."
+# 6. Check PostgreSQL (Warm Storage - Star Schema)
+print_header "Checking PostgreSQL - Star Schema Analytics Database"
+echo -e "${YELLOW}Counting rows in key Fact and Dimension tables...${NC}"
 
-# Check realtime_revenue
-echo "   📊 Checking realtime_revenue table..."
-REVENUE_COUNT=$(docker exec -it $(docker ps -qf "name=db") psql -U rafay -d game_analytics -t -c "SELECT count(*) FROM realtime_revenue;" 2>/dev/null | tr -d ' \r\n')
-if [ ! -z "$REVENUE_COUNT" ] && [ "$REVENUE_COUNT" -gt 0 ]; then
-    echo -e "${GREEN}✅ realtime_revenue has $REVENUE_COUNT rows${NC}"
-    docker exec -it $(docker ps -qf "name=db") psql -U rafay -d game_analytics -c "SELECT * FROM realtime_revenue ORDER BY window_start DESC LIMIT 3;"
-else
-    echo -e "${YELLOW}⚠️  realtime_revenue is empty or doesn't exist${NC}"
-fi
-echo ""
+PG_COMMANDS="
+SELECT 'dim_player' AS table, COUNT(*) FROM dim_player UNION ALL
+SELECT 'dim_game', COUNT(*) FROM dim_game UNION ALL
+SELECT 'dim_time', COUNT(*) FROM dim_time UNION ALL
+SELECT 'fact_session', COUNT(*) FROM fact_session UNION ALL
+SELECT 'fact_transaction', COUNT(*) FROM fact_transaction UNION ALL
+SELECT 'fact_telemetry', COUNT(*) FROM fact_telemetry;
+"
+docker-compose exec -T db psql -U rafay -d game_analytics -c "$PG_COMMANDS"
 
-# Check realtime_concurrency
-echo "   📊 Checking realtime_concurrency table..."
-CONCURRENCY_COUNT=$(docker exec -it $(docker ps -qf "name=db") psql -U rafay -d game_analytics -t -c "SELECT count(*) FROM realtime_concurrency;" 2>/dev/null | tr -d ' \r\n')
-if [ ! -z "$CONCURRENCY_COUNT" ] && [ "$CONCURRENCY_COUNT" -gt 0 ]; then
-    echo -e "${GREEN}✅ realtime_concurrency has $CONCURRENCY_COUNT rows${NC}"
-    docker exec -it $(docker ps -qf "name=db") psql -U rafay -d game_analytics -c "SELECT * FROM realtime_concurrency ORDER BY window_start DESC LIMIT 3;"
-else
-    echo -e "${YELLOW}⚠️  realtime_concurrency is empty or doesn't exist${NC}"
-fi
-echo ""
 
-# Check realtime_performance
-echo "   📊 Checking realtime_performance table..."
-PERFORMANCE_COUNT=$(docker exec -it $(docker ps -qf "name=db") psql -U rafay -d game_analytics -t -c "SELECT count(*) FROM realtime_performance;" 2>/dev/null | tr -d ' \r\n')
-if [ ! -z "$PERFORMANCE_COUNT" ] && [ "$PERFORMANCE_COUNT" -gt 0 ]; then
-    echo -e "${GREEN}✅ realtime_performance has $PERFORMANCE_COUNT rows${NC}"
-    docker exec -it $(docker ps -qf "name=db") psql -U rafay -d game_analytics -c "SELECT * FROM realtime_performance ORDER BY window_start DESC LIMIT 3;"
-else
-    echo -e "${YELLOW}⚠️  realtime_performance is empty or doesn't exist${NC}"
-fi
-echo ""
+# 7. Check Spark Processor Logs
+print_header "Tailing Spark Processor Logs"
+docker-compose logs --tail=15 spark-processor
 
-# 4. CHECK API ENDPOINTS
-echo "4️⃣  CHECKING API ENDPOINTS..."
-echo "   Testing /analytics/revenue..."
-REVENUE_API=$(curl -s http://localhost:8000/analytics/revenue | jq length 2>/dev/null)
-if [ ! -z "$REVENUE_API" ] && [ "$REVENUE_API" -gt 0 ]; then
-    echo -e "${GREEN}✅ API returns $REVENUE_API revenue records${NC}"
-else
-    echo -e "${YELLOW}⚠️  API returns empty or error for revenue${NC}"
-    curl -s http://localhost:8000/analytics/revenue
-fi
-echo ""
+# 8. Check API and Web Logs
+print_header "Tailing API and Web App Logs"
+echo -e "${YELLOW}--- API Logs ---${NC}"
+docker-compose logs --tail=10 api
+echo -e "\n${YELLOW}--- Web App Logs ---${NC}"
+docker-compose logs --tail=10 web
 
-echo "5️⃣  CHECKING EVENT TYPE DISTRIBUTION..."
-docker exec -it $(docker ps -qf "name=db") psql -U rafay -d game_analytics -c "SELECT event_type, COUNT(*) as count FROM game_metrics GROUP BY event_type ORDER BY count DESC LIMIT 10;"
-echo ""
 
-echo "=========================================="
-echo "DIAGNOSTIC COMPLETE"
-echo "=========================================="
-echo ""
-echo "💡 TIPS:"
-echo "   - If Kafka is empty, check if 'faker' container is running"
-echo "   - If tables are empty, check Spark logs for errors"
-echo "   - Spark waits for watermark to pass before writing"
-echo "   - With new settings, first rows should appear in 30-60 seconds"
-echo ""
-echo "🔧 USEFUL COMMANDS:"
-echo "   Watch Spark logs:        docker logs -f spark-processor"
-echo "   Watch Faker logs:        docker logs -f faker"
-echo "   Restart Spark:           docker-compose restart spark-processor"
-echo "   Clear checkpoints:       docker exec spark-processor rm -rf /tmp/checkpoints/*"
-echo ""
+print_header "Diagnostic Complete"
+echo -e "${GREEN}The script has finished. Review the output above to identify potential issues.${NC}"
+echo -e "${GREEN}Key things to look for:${NC}"
+echo -e "${GREEN}- Errors in the logs for any service.${NC}"
+echo -e "${GREEN}- A count of 0 in Kafka, MongoDB, or PostgreSQL, which could indicate a blockage.${NC}"
+echo -e "${GREEN}- Unhealthy container statuses.${NC}"

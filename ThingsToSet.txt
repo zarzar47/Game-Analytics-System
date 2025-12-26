@@ -1,0 +1,19 @@
+Go to Airflow UI -> Admin -> Connections.
+
+Find or Create mongo_default.
+
+Configure it as follows:
+
+    Conn Id: mongo_default
+
+    Conn Type: MongoDB
+
+    Host: mongo
+
+    Port: 27017
+
+    Login: admin
+
+    Password: admin
+
+    Extra: {"authSource": "admin"}
