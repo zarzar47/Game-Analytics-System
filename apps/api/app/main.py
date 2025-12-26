@@ -1,3 +1,6 @@
+import redis.asyncio as redis
+import os
+import json
 from fastapi import FastAPI, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List
@@ -6,6 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, text
 from game_library import get_games
 import datetime
+
+# --- REDIS SETUP ---
+# Use the REDIS_URL from the environment variables, with a fallback for local dev
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+redis_pool = redis.from_url(REDIS_URL, decode_responses=True)
 
 app = FastAPI(title="Game Analytics API - Star Schema")
 
@@ -63,54 +71,62 @@ def list_games():
 async def get_game_overview(game_id: str, db: AsyncSession = Depends(get_db)):
     """
     Get comprehensive overview for a game using star schema joins.
-    Demonstrates: Multiple JOINS, GROUP BY, Aggregations
+    Demonstrates: Multiple JOINS, GROUP BY, Aggregations, and Caching with Redis.
     """
-    query = text("""
-        WITH player_metrics AS (
-            SELECT 
-                dg.game_name,
-                COUNT(DISTINCT fs.player_id) as total_players,
-                AVG(fs.duration_seconds) as avg_session_duration,
-                COUNT(fs.session_id) as total_sessions
-            FROM fact_session fs
-            JOIN dim_game dg ON fs.game_id = dg.game_id
-            WHERE dg.game_id = :game_id
-            GROUP BY dg.game_name
-        ),
-        revenue_metrics AS (
-            SELECT 
-                SUM(ft.amount_usd) as total_revenue
-            FROM fact_transaction ft
-            WHERE ft.game_id = :game_id
-        ),
-        performance_metrics AS (
-            SELECT 
-                AVG(ftel.fps) as avg_fps,
-                AVG(ftel.latency_ms) as avg_latency
-            FROM fact_telemetry ftel
-            WHERE ftel.game_id = :game_id
-        )
-        SELECT 
-            pm.game_name,
-            pm.total_players,
-            COALESCE(rm.total_revenue, 0) as total_revenue,
-            pm.avg_session_duration,
-            pm.total_sessions,
-            perf.avg_fps,
-            perf.avg_latency
-        FROM player_metrics pm
-        CROSS JOIN revenue_metrics rm
-        CROSS JOIN performance_metrics perf
-    """)
+    cache_key = f"overview:{game_id}"
     
     try:
-        result = await db.execute(query, {"game_id": game_id})
-        row = result.fetchone()
+        # 1. Check cache first
+        cached_result = await redis_pool.get(cache_key)
+        if cached_result:
+            return json.loads(cached_result)
+
+        # 2. If not in cache, query the database
+        query = text("""
+            WITH player_metrics AS (
+                SELECT 
+                    dg.game_name,
+                    COUNT(DISTINCT fs.player_id) as total_players,
+                    AVG(fs.duration_seconds) as avg_session_duration,
+                    COUNT(fs.session_id) as total_sessions
+                FROM fact_session fs
+                JOIN dim_game dg ON fs.game_id = dg.game_id
+                WHERE dg.game_id = :game_id
+                GROUP BY dg.game_name
+            ),
+            revenue_metrics AS (
+                SELECT 
+                    SUM(ft.amount_usd) as total_revenue
+                FROM fact_transaction ft
+                WHERE ft.game_id = :game_id
+            ),
+            performance_metrics AS (
+                SELECT 
+                    AVG(ftel.fps) as avg_fps,
+                    AVG(ftel.latency_ms) as avg_latency
+                FROM fact_telemetry ftel
+                WHERE ftel.game_id = :game_id
+            )
+            SELECT 
+                pm.game_name,
+                pm.total_players,
+                COALESCE(rm.total_revenue, 0) as total_revenue,
+                pm.avg_session_duration,
+                pm.total_sessions,
+                perf.avg_fps,
+                perf.avg_latency
+            FROM player_metrics pm
+            CROSS JOIN revenue_metrics rm
+            CROSS JOIN performance_metrics perf
+        """)
+        
+        db_result = await db.execute(query, {"game_id": game_id})
+        row = db_result.fetchone()
         
         if not row:
             raise HTTPException(status_code=404, detail=f"No data found for game {game_id}")
         
-        return StarSchemaMetrics(
+        result_model = StarSchemaMetrics(
             game_name=row[0],
             total_players=row[1] or 0,
             total_revenue=float(row[2] or 0),
@@ -119,6 +135,17 @@ async def get_game_overview(game_id: str, db: AsyncSession = Depends(get_db)):
             avg_fps=float(row[5]) if row[5] else None,
             avg_latency=float(row[6]) if row[6] else None
         )
+        
+        # 3. Store result in cache with a 5-minute expiration
+        # Pydantic's .model_dump_json() is preferred for FastAPI >= v0.99.0
+        await redis_pool.set(cache_key, result_model.model_dump_json(), ex=300) 
+        
+        return result_model
+
+    except redis.RedisError as e:
+        # If Redis fails, proceed without caching and just hit the DB
+        # (You might want to log this error)
+        pass
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
