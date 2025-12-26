@@ -22,5 +22,71 @@
     "name": "Stardew Valley",
     "cover_url": "https://cdn2.steamgriddb.com/thumb/ae3cc6a9c0dfe9bef84a66e311bb779a.jpg",
     "tags": ["Simulation", "Farming", "Indie", "RPG"]
+  },
+  {
+    "id": "105",
+    "name": "The Witcher 3: Wild Hunt",
+    "cover_url": "https://placeholder.jpg",
+    "tags": ["RPG", "Open World", "Fantasy", "Story Rich"]
+  },
+  {
+    "id": "106",
+    "name": "Grand Theft Auto V",
+    "cover_url": "https://placeholder.jpg",
+    "tags": ["Action", "Open World", "Multiplayer", "Crime"]
+  },
+  {
+    "id": "107",
+    "name": "Red Dead Redemption 2",
+    "cover_url": "https://placeholder.jpg",
+    "tags": ["Action-Adventure", "Open World", "Western", "Story Rich"]
+  },
+  {
+    "id": "108",
+    "name": "Cyberpunk 2077",
+    "cover_url": "https://placeholder.jpg",
+    "tags": ["RPG", "Open World", "Sci-Fi", "Cyberpunk"]
+  },
+  {
+    "id": "109",
+    "name": "Overwatch 2",
+    "cover_url": "https://placeholder.jpg",
+    "tags": ["Hero Shooter", "FPS", "Multiplayer", "Team-Based"]
+  },
+  {
+    "id": "110",
+    "name": "League of Legends",
+    "cover_url": "https://placeholder.jpg",
+    "tags": ["MOBA", "Multiplayer", "Strategy", "Competitive"]
+  },
+  {
+    "id": "111",
+    "name": "Dota 2",
+    "cover_url": "https://placeholder.jpg",
+    "tags": ["MOBA", "Multiplayer", "Strategy", "Competitive"]
+  },
+  {
+    "id": "112",
+    "name": "Fortnite",
+    "cover_url": "https://placeholder.jpg",
+    "tags": ["Battle Royale", "Shooter", "Multiplayer", "Building"]
+  },
+  {
+    "id": "113",
+    "name": "Apex Legends",
+    "cover_url": "https://placeholder.jpg",
+    "tags": ["Battle Royale", "Hero Shooter", "FPS", "Multiplayer"]
+  },
+  {
+    "id": "114",
+    "name": "Baldur's Gate 3",
+    "cover_url": "https://placeholder.jpg",
+    "tags": ["RPG", "CRPG", "D&D", "Story Rich"]
+  },
+  {
+    "id": "115",
+    "name": "Helldivers 2",
+    "cover_url": "https://placeholder.jpg",
+    "tags": ["Co-op", "Shooter", "Sci-Fi", "Action"]
   }
 ]

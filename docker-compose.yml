@@ -51,6 +51,22 @@ services:
       timeout: 5s
       retries: 5
 
+  # Redis (In-Memory Cache)
+  redis:
+    image: redis:7-alpine
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - game_analytics_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   # Hadoop Namenode (Cold Archive)
   namenode:
     image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
@@ -189,10 +205,12 @@ services:
       - DATABASE_URL=postgresql+asyncpg://rafay:rafay@db:5432/game_analytics
       - MONGODB_URL=mongodb://admin:admin@mongo:27017/game_analytics?authSource=admin
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - REDIS_URL=redis://redis:6379
     depends_on:
       - db
       - mongo
       - kafka
+      - redis
     volumes:
       - ./apps/api:/app
       - ./packages/game_library:/packages/game_library
@@ -263,6 +281,7 @@ services:
 volumes:
   postgres_data:
   mongo_data:
+  redis_data:
   hadoop_namenode:
   hadoop_datanode:
 
