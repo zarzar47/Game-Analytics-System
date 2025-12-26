@@ -6,6 +6,8 @@ import plotly.express as px
 import plotly.graph_objects as go
 from game_library import get_games
 from streamlit_autorefresh import st_autorefresh
+from datetime import datetime
+import time
 
 # Configuration
 API_URL = os.getenv("API_URL", "http://localhost:8000")
@@ -218,13 +220,6 @@ st.markdown("""
         margin-top: -8px;
         margin-bottom: 16px;
     }
-    
-    /* Container Borders */
-    [data-testid="stVerticalBlock"] > [style*="flex-direction: column;"] > [data-testid="stVerticalBlock"] {
-        background: rgba(255, 255, 255, 0.02);
-        border-radius: 16px;
-        padding: 12px;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -232,62 +227,94 @@ st.markdown("""
 # HELPER FUNCTIONS
 # ============================================================================
 
-@st.cache_data
 def fetch_star_schema_overview(game_id: str, cache_ttl: int):
     """Fetch comprehensive overview from star schema"""
     try:
-        # Pass the cache_ttl from the session state to the API endpoint
-        url = f"{API_URL}/analytics/star-schema/overview/{game_id}?cache_ttl={cache_ttl}"
-        response = requests.get(url)
+        url = f"{API_URL}/analytics/star-schema/overview/{game_id}?cache_ttl={cache_ttl}&skip_cache=true"
+        response = requests.get(url, timeout=5)
         response.raise_for_status()
-        return response.json()
+        data = response.json()
+        data['_fetched_at'] = datetime.now().isoformat()
+        return data
+    except requests.exceptions.Timeout:
+        st.error(f"Request timeout for game {game_id}")
+        return None
     except Exception as e:
         st.error(f"Error fetching overview: {e}")
         return None
 
-@st.cache_data(ttl=10)
 def fetch_revenue_by_segment(game_id: str):
     """Fetch revenue breakdown by player segment"""
     try:
-        response = requests.get(f"{API_URL}/analytics/star-schema/revenue-by-segment/{game_id}")
+        response = requests.get(
+            f"{API_URL}/analytics/star-schema/revenue-by-segment/{game_id}",
+            timeout=5
+        )
         response.raise_for_status()
         return pd.DataFrame(response.json())
     except Exception as e:
-        st.warning(f"No revenue data yet: {e}")
         return pd.DataFrame()
 
-@st.cache_data(ttl=10)
 def fetch_regional_performance(game_id: str):
     """Fetch performance metrics by region"""
     try:
-        response = requests.get(f"{API_URL}/analytics/star-schema/regional-performance/{game_id}")
+        response = requests.get(
+            f"{API_URL}/analytics/star-schema/regional-performance/{game_id}",
+            timeout=5
+        )
         response.raise_for_status()
         return pd.DataFrame(response.json())
     except Exception as e:
-        st.warning(f"No performance data yet: {e}")
         return pd.DataFrame()
 
-@st.cache_data(ttl=10)
 def fetch_top_spenders(game_id: str):
     """Fetch top spending players"""
     try:
-        response = requests.get(f"{API_URL}/analytics/star-schema/top-spenders/{game_id}?limit=10")
+        response = requests.get(
+            f"{API_URL}/analytics/star-schema/top-spenders/{game_id}?limit=10",
+            timeout=5
+        )
         response.raise_for_status()
         return pd.DataFrame(response.json())
     except Exception as e:
-        st.warning(f"No spender data yet: {e}")
         return pd.DataFrame()
 
-@st.cache_data(ttl=10)
 def fetch_weekend_metrics(game_id: str):
     """Fetch weekend vs weekday comparison"""
     try:
-        response = requests.get(f"{API_URL}/analytics/star-schema/weekend-vs-weekday/{game_id}")
+        response = requests.get(
+            f"{API_URL}/analytics/star-schema/weekend-vs-weekday/{game_id}",
+            timeout=5
+        )
         response.raise_for_status()
         return pd.DataFrame(response.json())
     except Exception as e:
-        st.warning(f"No temporal data yet: {e}")
         return pd.DataFrame()
+
+# ============================================================================
+# DEBUG PANEL
+# ============================================================================
+
+def render_debug_panel():
+    """Show system health and data freshness"""
+    with st.expander("Debug Information", expanded=False):
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("Last UI Refresh", datetime.now().strftime("%H:%M:%S"))
+        
+        with col2:
+            try:
+                response = requests.get(f"{API_URL}/health", timeout=2)
+                if response.status_code == 200:
+                    st.success("API Online")
+                else:
+                    st.error("API Error")
+            except:
+                st.error("API Offline")
+        
+        with col3:
+            st.metric("Cache TTL", f"{st.session_state.cache_ttl}s")
 
 # ============================================================================
 # GAME DETAIL VIEW
@@ -296,40 +323,60 @@ def fetch_weekend_metrics(game_id: str):
 def render_game_detail(game):
     st.title(f"{game['name']} - Star Schema Analytics")
     
-    # Fetch all data, passing the configured cache TTL
-    cache_ttl = st.session_state.cache_ttl
-    overview = fetch_star_schema_overview(game['id'], cache_ttl)
+    render_debug_panel()
+    
+    # FIXED: Removed time component from cache key for stability
+    cache_key = f"game_detail_{game['id']}"
+    
+    overview = fetch_star_schema_overview(game['id'], st.session_state.cache_ttl)
     revenue_df = fetch_revenue_by_segment(game['id'])
     regional_df = fetch_regional_performance(game['id'])
     spenders_df = fetch_top_spenders(game['id'])
     weekend_df = fetch_weekend_metrics(game['id'])
     
+    st.info(f"Data fetched at: {datetime.now().strftime('%H:%M:%S')}")
+    
     # ========================================================================
-    # SECTION 1: KEY METRICS (From Star Schema Joins)
+    # SECTION 1: KEY METRICS
     # ========================================================================
     st.header("Key Performance Indicators")
     
-    if overview:
+    if overview and overview.get('total_players', 0) > 0:
         col1, col2, col3, col4 = st.columns(4)
         
-        metrics = [
-            ("Total Players", f"{overview['total_players']:,}", "Unique players from fact_session JOIN dim_player"),
-            ("Total Revenue", f"${overview['total_revenue']:,.2f}", "Sum from fact_transaction"),
-            ("Avg Session Duration", f"{int(overview['avg_session_duration'])}s", "Average from fact_session.duration_seconds"),
-            ("Total Sessions", f"{overview['total_sessions']:,}", "Count from fact_session")
-        ]
+        with col1:
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-label">Total Players</div>
+                <div class="metric-value">{overview['total_players']:,}</div>
+            </div>
+            """, unsafe_allow_html=True)
         
-        for col, (label, value, help_text) in zip([col1, col2, col3, col4], metrics):
-            with col:
-                st.markdown(f"""
-                <div class="metric-card">
-                    <div class="metric-label">{label}</div>
-                    <div class="metric-value">{value}</div>
-                </div>
-                """, unsafe_allow_html=True)
+        with col2:
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-label">Total Revenue</div>
+                <div class="metric-value">${overview['total_revenue']:,.2f}</div>
+            </div>
+            """, unsafe_allow_html=True)
         
-        # Performance metrics
-        st.subheader("Performance Metrics (From fact_telemetry)")
+        with col3:
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-label">Avg Session Duration</div>
+                <div class="metric-value">{int(overview['avg_session_duration'])}s</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col4:
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-label">Total Sessions</div>
+                <div class="metric-value">{overview['total_sessions']:,}</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        st.subheader("Performance Metrics")
         col1, col2 = st.columns(2)
         
         with col1:
@@ -354,7 +401,7 @@ def render_game_detail(game):
             else:
                 st.info("No latency data yet")
     else:
-        st.warning("Waiting for data... Star schema is being populated by Airflow ETL.")
+        st.warning("No data available for this game")
     
     st.divider()
     
@@ -368,7 +415,6 @@ def render_game_detail(game):
         col1, col2 = st.columns([2, 1])
         
         with col1:
-            # Bar chart with modern styling
             fig = px.bar(
                 revenue_df,
                 x='player_segment',
@@ -388,7 +434,7 @@ def render_game_detail(game):
                 font=dict(color='#e2e8f0'),
                 showlegend=False
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, key=f"revenue_chart_{cache_key}")
         
         with col2:
             st.subheader("Breakdown")
@@ -402,7 +448,7 @@ def render_game_detail(game):
                 </div>
                 """, unsafe_allow_html=True)
     else:
-        st.info("No revenue data yet. Purchases will appear here once generated.")
+        st.info("No revenue data yet")
     
     st.divider()
     
@@ -430,7 +476,7 @@ def render_game_detail(game):
                 font=dict(color='#e2e8f0'),
                 showlegend=False
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, key=f"concurrency_chart_{cache_key}")
         
         with col2:
             st.subheader("Performance Metrics by Region")
@@ -454,44 +500,26 @@ def render_game_detail(game):
                 paper_bgcolor='rgba(0,0,0,0)',
                 font=dict(color='#e2e8f0')
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, key=f"performance_chart_{cache_key}")
         
-        # Data table
         st.subheader("Detailed Regional Stats")
         st.dataframe(regional_df, use_container_width=True, hide_index=True)
     else:
-        st.info("No telemetry data yet. Heartbeats will populate this section.")
+        st.info("No telemetry data yet")
     
     st.divider()
     
     # ========================================================================
     # SECTION 4: TOP SPENDERS
     # ========================================================================
-    st.header("Top Spenders (Whale Analysis)")
+    st.header("Top Spenders")
     st.markdown('<p class="caption">Query: JOIN fact_transaction with dim_player, ORDER BY total revenue DESC</p>', unsafe_allow_html=True)
     
     if not spenders_df.empty:
-        # Format for display
         spenders_df['total_spent'] = spenders_df['total_spent'].apply(lambda x: f"${x:,.2f}")
-        
-        st.dataframe(
-            spenders_df,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "username": "Username",
-                "player_segment": st.column_config.TextColumn(
-                    "Segment",
-                    help="Player archetype (CASUAL, HARDCORE, WHALE)"
-                ),
-                "region": "Region",
-                "platform": "Platform",
-                "purchase_count": "# Purchases",
-                "total_spent": "Total Spent"
-            }
-        )
+        st.dataframe(spenders_df, use_container_width=True, hide_index=True)
     else:
-        st.info("No whale data yet. High spenders will appear here.")
+        st.info("No spender data yet")
     
     st.divider()
     
@@ -520,7 +548,7 @@ def render_game_detail(game):
                 font=dict(color='#e2e8f0'),
                 showlegend=False
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, key=f"sessions_chart_{cache_key}")
         
         with col2:
             fig = px.bar(
@@ -538,12 +566,12 @@ def render_game_detail(game):
                 font=dict(color='#e2e8f0'),
                 showlegend=False
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, key=f"revenue_temporal_chart_{cache_key}")
     else:
-        st.info("Temporal data will appear once dim_time is populated.")
+        st.info("No temporal data yet")
 
 # ============================================================================
-# DASHBOARD VIEW (Global Overview)
+# DASHBOARD VIEW
 # ============================================================================
 
 def render_dashboard():
@@ -552,15 +580,16 @@ def render_dashboard():
     
     st.markdown("""
     <div class="modern-card" style="margin-bottom: 24px;">
-        <h3 style="color: #a78bfa; margin-top: 0;">What's New in This Version</h3>
+        <h3 style="color: #a78bfa; margin-top: 0;">Real-Time Game Analytics System</h3>
         <ul style="color: #cbd5e1; line-height: 1.8;">
-            <li><strong>Star Schema Integration:</strong> All analytics now use proper dimensional modeling</li>
-            <li><strong>Enhanced Data Generation:</strong> Comprehensive event simulation with all dimensions populated</li>
-            <li><strong>MongoDB → Airflow → PostgreSQL:</strong> Clear ETL pipeline via Airflow DAGs</li>
-            <li><strong>Complex SQL Analytics:</strong> Multi-table JOINs, GROUP BY, HAVING, aggregations</li>
+            <li><strong>Star Schema:</strong> Dimensional modeling with fact and dimension tables</li>
+            <li><strong>ETL Pipeline:</strong> Kafka → MongoDB → Airflow → PostgreSQL</li>
+            <li><strong>Analytics:</strong> Multi-table JOINs, aggregations, GROUP BY</li>
         </ul>
     </div>
     """, unsafe_allow_html=True)
+    
+    render_debug_panel()
     
     st.divider()
     
@@ -574,7 +603,6 @@ def render_dashboard():
         col_idx = idx % 4
         
         with cols[col_idx]:
-            # Fetch quick stats using the configured cache TTL
             overview = fetch_star_schema_overview(game['id'], st.session_state.cache_ttl)
             
             st.markdown(f"""
@@ -584,19 +612,19 @@ def render_dashboard():
                 </div>
                 <div class="game-title">{game['name']}</div>
                 <div class="game-stats">
-                    {"<div class='game-stat-item'>Players: " + f"{overview['total_players']:,}</div><div class='game-stat-item'>Revenue: ${overview['total_revenue']:.0f}</div>" if overview else "<div class='game-stat-item'>Loading...</div>"}
+                    {"<div class='game-stat-item'>Players: " + f"{overview['total_players']:,}</div><div class='game-stat-item'>Revenue: ${overview['total_revenue']:.0f}</div>" if overview and overview.get('total_players', 0) > 0 else "<div class='game-stat-item'>Loading...</div>"}
                 </div>
             </div>
             """, unsafe_allow_html=True)
             
+            # FIXED: Removed time.time() from button key - now stable across refreshes
             if st.button("View Analytics", key=f"btn_{game['id']}", use_container_width=True):
                 st.session_state.selected_game = game
                 st.session_state.view = 'detail'
                 st.rerun()
 
 def render_settings_page():
-    st.title("⚙️ Settings")
-    st.markdown('<p class="caption">Configure application behavior for development and testing.</p>', unsafe_allow_html=True)
+    st.title("Settings")
     
     st.markdown('<div class="modern-card">', unsafe_allow_html=True)
     
@@ -607,11 +635,11 @@ def render_settings_page():
         min_value=1,
         max_value=600,
         value=st.session_state.cache_ttl,
-        help="Time-To-Live for data in the Redis cache. Lower values mean faster data refreshes from the database."
+        help="Lower values = faster updates but more database load"
     )
     if new_ttl != st.session_state.cache_ttl:
         st.session_state.cache_ttl = new_ttl
-        st.success(f"Cache TTL updated to {new_ttl} seconds.")
+        st.success(f"Cache TTL updated to {new_ttl} seconds")
 
     st.divider()
     
@@ -621,34 +649,39 @@ def render_settings_page():
         min_value=5,
         max_value=60,
         value=st.session_state.auto_refresh_interval,
-        help="How often the UI should automatically refresh. Set to a higher value to reduce requests."
+        help="How often the UI refreshes automatically"
     )
     if new_refresh != st.session_state.auto_refresh_interval:
         st.session_state.auto_refresh_interval = new_refresh
-        st.success(f"UI refresh interval updated to {new_refresh} seconds.")
-        st.info("The new refresh interval will apply after the next manual or automatic refresh.")
-
+        st.success(f"UI refresh interval updated to {new_refresh} seconds")
+    
     st.markdown('</div>', unsafe_allow_html=True)
-
+    
+    st.divider()
+    if st.button("Clear All Caches & Force Refresh", type="primary"):
+        st.cache_data.clear()
+        st.success("Caches cleared!")
+        st.rerun()
 
 # ============================================================================
 # MAIN APP LOGIC
 # ============================================================================
 
-# Initialize session state
 if 'view' not in st.session_state:
     st.session_state.view = 'dashboard'
 if 'selected_game' not in st.session_state:
     st.session_state.selected_game = None
 if 'cache_ttl' not in st.session_state:
-    st.session_state.cache_ttl = 300  # Default Cache TTL
+    st.session_state.cache_ttl = 10
 if 'auto_refresh_interval' not in st.session_state:
-    st.session_state.auto_refresh_interval = 10 # Default UI refresh
+    st.session_state.auto_refresh_interval = 10
 
-# Auto-refresh using the value from session state
-st_autorefresh(interval=st.session_state.auto_refresh_interval * 1000, key="ui_refresh")
+# FIXED: Stable refresh key
+refresh_count = st_autorefresh(
+    interval=st.session_state.auto_refresh_interval * 1000, 
+    key="autorefresh_main"
+)
 
-# Sidebar Navigation
 with st.sidebar:
     st.markdown("<h1>Game Analytics</h1>", unsafe_allow_html=True)
     
@@ -659,11 +692,11 @@ with st.sidebar:
     )
     
     st.divider()
+    st.info(f"Refresh #{refresh_count}")
     st.info(f"Cache TTL: {st.session_state.cache_ttl}s")
     st.info(f"UI Refresh: {st.session_state.auto_refresh_interval}s")
+    st.caption(f"Last refresh: {datetime.now().strftime('%H:%M:%S')}")
 
-
-# Page Routing
 if page == "Dashboard":
     if st.session_state.view == 'dashboard':
         render_dashboard()

@@ -9,9 +9,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, text
 from game_library import get_games
 import datetime
+import logging
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # --- REDIS SETUP ---
-# Use the REDIS_URL from the environment variables, with a fallback for local dev
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 redis_pool = redis.from_url(REDIS_URL, decode_responses=True)
 
@@ -55,7 +59,62 @@ class TimeSeriesData(BaseModel):
 
 @app.get("/health")
 def health_check():
-    return {"status": "operational", "service": "star-schema-api"}
+    return {
+        "status": "operational", 
+        "service": "star-schema-api",
+        "timestamp": datetime.datetime.utcnow().isoformat()
+    }
+
+# --- DEBUG ENDPOINTS ---
+
+@app.get("/debug/cache-info")
+async def cache_info():
+    """Get information about cache status"""
+    try:
+        info = await redis_pool.info()
+        keys = await redis_pool.keys("overview:*")
+        return {
+            "redis_connected": True,
+            "total_keys": len(keys),
+            "cached_games": [k.replace("overview:", "") for k in keys],
+            "redis_version": info.get("redis_version", "unknown")
+        }
+    except Exception as e:
+        return {"redis_connected": False, "error": str(e)}
+
+@app.post("/debug/clear-cache")
+async def clear_cache():
+    """Clear all Redis caches"""
+    try:
+        keys = await redis_pool.keys("overview:*")
+        if keys:
+            await redis_pool.delete(*keys)
+        return {"cleared": len(keys), "message": f"Cleared {len(keys)} cache entries"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Cache clear failed: {str(e)}")
+
+@app.get("/debug/database-stats")
+async def database_stats(db: AsyncSession = Depends(get_db)):
+    """Get database table row counts"""
+    try:
+        tables = [
+            "dim_player", "dim_game", "dim_time", "dim_geography", "dim_item",
+            "fact_session", "fact_transaction", "fact_telemetry"
+        ]
+        
+        stats = {}
+        for table in tables:
+            result = await db.execute(text(f"SELECT COUNT(*) FROM {table}"))
+            count = result.scalar()
+            stats[table] = count
+        
+        return {
+            "timestamp": datetime.datetime.utcnow().isoformat(),
+            "table_counts": stats,
+            "total_records": sum(stats.values())
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database query failed: {str(e)}")
 
 # --- GAME LIST ---
 
@@ -64,28 +123,37 @@ def list_games():
     return get_games()
 
 # ============================================================================
-# STAR SCHEMA ANALYTICS ENDPOINTS
+# STAR SCHEMA ANALYTICS ENDPOINTS (ENHANCED)
 # ============================================================================
 
 @app.get("/analytics/star-schema/overview/{game_id}")
 async def get_game_overview(
     game_id: str, 
     db: AsyncSession = Depends(get_db),
-    cache_ttl: int = 300  # Default TTL of 5 minutes (300 seconds)
+    cache_ttl: int = 10,  # Changed default from 300 to 10
+    skip_cache: bool = False  # New parameter to force fresh data
 ):
     """
     Get comprehensive overview for a game using star schema joins.
-    Demonstrates: Multiple JOINS, GROUP BY, Aggregations, and Caching with Redis.
+    NOW WITH ENHANCED LOGGING AND CACHE CONTROL
     """
     cache_key = f"overview:{game_id}"
     
     try:
-        # 1. Check cache first
-        cached_result = await redis_pool.get(cache_key)
-        if cached_result:
-            return json.loads(cached_result)
+        # 1. Check cache first (unless skip_cache is True)
+        if not skip_cache:
+            cached_result = await redis_pool.get(cache_key)
+            if cached_result:
+                logger.info(f"✅ Cache HIT for game {game_id}")
+                return json.loads(cached_result)
+            else:
+                logger.info(f"❌ Cache MISS for game {game_id}")
+        else:
+            logger.info(f"⚠️ Cache SKIPPED for game {game_id}")
 
-        # 2. If not in cache, query the database
+        # 2. Query database
+        logger.info(f"🔍 Querying database for game {game_id}")
+        
         query = text("""
             WITH player_metrics AS (
                 SELECT 
@@ -112,11 +180,11 @@ async def get_game_overview(
                 WHERE ftel.game_id = :game_id
             )
             SELECT 
-                pm.game_name,
-                pm.total_players,
+                COALESCE(pm.game_name, 'Unknown') as game_name,
+                COALESCE(pm.total_players, 0) as total_players,
                 COALESCE(rm.total_revenue, 0) as total_revenue,
-                pm.avg_session_duration,
-                pm.total_sessions,
+                COALESCE(pm.avg_session_duration, 0) as avg_session_duration,
+                COALESCE(pm.total_sessions, 0) as total_sessions,
                 perf.avg_fps,
                 perf.avg_latency
             FROM player_metrics pm
@@ -127,37 +195,48 @@ async def get_game_overview(
         db_result = await db.execute(query, {"game_id": game_id})
         row = db_result.fetchone()
         
-        if not row:
-            raise HTTPException(status_code=404, detail=f"No data found for game {game_id}")
+        if not row or row[1] == 0:  # No players
+            logger.warning(f"⚠️ No data found for game {game_id}")
+            # Return empty state instead of 404
+            result_model = StarSchemaMetrics(
+                game_name="Unknown",
+                total_players=0,
+                total_revenue=0.0,
+                avg_session_duration=0.0,
+                total_sessions=0,
+                avg_fps=None,
+                avg_latency=None
+            )
+        else:
+            result_model = StarSchemaMetrics(
+                game_name=row[0],
+                total_players=row[1] or 0,
+                total_revenue=float(row[2] or 0),
+                avg_session_duration=float(row[3] or 0),
+                total_sessions=row[4] or 0,
+                avg_fps=float(row[5]) if row[5] else None,
+                avg_latency=float(row[6]) if row[6] else None
+            )
+            logger.info(f"✅ Found data for game {game_id}: {row[1]} players, ${row[2]:.2f} revenue")
         
-        result_model = StarSchemaMetrics(
-            game_name=row[0],
-            total_players=row[1] or 0,
-            total_revenue=float(row[2] or 0),
-            avg_session_duration=float(row[3] or 0),
-            total_sessions=row[4] or 0,
-            avg_fps=float(row[5]) if row[5] else None,
-            avg_latency=float(row[6]) if row[6] else None
-        )
-        
-        # 3. Store result in cache with the configurable expiration
-        await redis_pool.set(cache_key, result_model.model_dump_json(), ex=cache_ttl) 
+        # 3. Store result in cache
+        if not skip_cache:
+            await redis_pool.set(cache_key, result_model.model_dump_json(), ex=cache_ttl)
+            logger.info(f"💾 Cached data for game {game_id} (TTL: {cache_ttl}s)")
         
         return result_model
 
     except redis.RedisError as e:
-        # If Redis fails, proceed without caching and just hit the DB
-        # (You might want to log this error)
+        logger.error(f"Redis error for game {game_id}: {e}")
+        # Continue without cache
         pass
     except Exception as e:
+        logger.error(f"Database error for game {game_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 @app.get("/analytics/star-schema/revenue-by-segment/{game_id}")
 async def get_revenue_by_player_segment(game_id: str, db: AsyncSession = Depends(get_db)):
-    """
-    Revenue breakdown by player segment (CASUAL, HARDCORE, WHALE).
-    Demonstrates: JOIN, GROUP BY, HAVING, Aggregations
-    """
+    """Revenue breakdown by player segment"""
     query = text("""
         SELECT 
             dp.player_segment,
@@ -186,14 +265,12 @@ async def get_revenue_by_player_segment(game_id: str, db: AsyncSession = Depends
             for row in rows
         ]
     except Exception as e:
+        logger.error(f"Error fetching revenue by segment: {e}")
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 @app.get("/analytics/star-schema/regional-performance/{game_id}")
 async def get_regional_performance(game_id: str, db: AsyncSession = Depends(get_db)):
-    """
-    Performance metrics by region.
-    Demonstrates: Multiple JOINs, Aggregations, Geography dimension usage
-    """
+    """Performance metrics by region"""
     query = text("""
         SELECT 
             ftel.region,
@@ -221,6 +298,7 @@ async def get_regional_performance(game_id: str, db: AsyncSession = Depends(get_
             for row in rows
         ]
     except Exception as e:
+        logger.error(f"Error fetching regional performance: {e}")
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 @app.get("/analytics/star-schema/revenue-timeline/{game_id}")
@@ -229,10 +307,7 @@ async def get_revenue_timeline(
     hours: int = 24,
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Revenue over time using dim_time.
-    Demonstrates: Time dimension joins, WHERE filtering, Time-based aggregation
-    """
+    """Revenue over time using dim_time"""
     query = text("""
         SELECT 
             dt.timestamp,
@@ -265,10 +340,7 @@ async def get_top_spenders(
     limit: int = 10,
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Top spending players with their details.
-    Demonstrates: Complex JOIN, Aggregation, ORDER BY, LIMIT
-    """
+    """Top spending players"""
     query = text("""
         SELECT 
             dp.username,
@@ -305,10 +377,7 @@ async def get_top_spenders(
 
 @app.get("/analytics/star-schema/weekend-vs-weekday/{game_id}")
 async def get_weekend_vs_weekday_metrics(game_id: str, db: AsyncSession = Depends(get_db)):
-    """
-    Compare weekend vs weekday revenue and sessions.
-    Demonstrates: Time dimension (is_weekend), CASE statements, Aggregations
-    """
+    """Compare weekend vs weekday metrics"""
     query = text("""
         SELECT 
             CASE WHEN dt.is_weekend THEN 'Weekend' ELSE 'Weekday' END as period_type,
@@ -339,7 +408,7 @@ async def get_weekend_vs_weekday_metrics(game_id: str, db: AsyncSession = Depend
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 # ============================================================================
-# LEGACY SPARK ENDPOINTS (Keep for backward compatibility)
+# LEGACY SPARK ENDPOINTS
 # ============================================================================
 
 @app.get("/analytics/revenue")

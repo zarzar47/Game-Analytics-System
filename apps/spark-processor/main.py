@@ -151,6 +151,7 @@ if __name__ == "__main__":
     revenue_agg = (
         events_df
         .filter(lower(col("event_type")) == "purchase")
+        .na.fill("UNKNOWN", subset=["player_type"])
         .groupBy(
             window("timestamp", "1 minute"),
             "game_name",
