@@ -68,7 +68,11 @@ def list_games():
 # ============================================================================
 
 @app.get("/analytics/star-schema/overview/{game_id}")
-async def get_game_overview(game_id: str, db: AsyncSession = Depends(get_db)):
+async def get_game_overview(
+    game_id: str, 
+    db: AsyncSession = Depends(get_db),
+    cache_ttl: int = 300  # Default TTL of 5 minutes (300 seconds)
+):
     """
     Get comprehensive overview for a game using star schema joins.
     Demonstrates: Multiple JOINS, GROUP BY, Aggregations, and Caching with Redis.
@@ -136,9 +140,8 @@ async def get_game_overview(game_id: str, db: AsyncSession = Depends(get_db)):
             avg_latency=float(row[6]) if row[6] else None
         )
         
-        # 3. Store result in cache with a 5-minute expiration
-        # Pydantic's .model_dump_json() is preferred for FastAPI >= v0.99.0
-        await redis_pool.set(cache_key, result_model.model_dump_json(), ex=300) 
+        # 3. Store result in cache with the configurable expiration
+        await redis_pool.set(cache_key, result_model.model_dump_json(), ex=cache_ttl) 
         
         return result_model
 

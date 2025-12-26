@@ -232,11 +232,13 @@ st.markdown("""
 # HELPER FUNCTIONS
 # ============================================================================
 
-@st.cache_data(ttl=10)
-def fetch_star_schema_overview(game_id: str):
+@st.cache_data
+def fetch_star_schema_overview(game_id: str, cache_ttl: int):
     """Fetch comprehensive overview from star schema"""
     try:
-        response = requests.get(f"{API_URL}/analytics/star-schema/overview/{game_id}")
+        # Pass the cache_ttl from the session state to the API endpoint
+        url = f"{API_URL}/analytics/star-schema/overview/{game_id}?cache_ttl={cache_ttl}"
+        response = requests.get(url)
         response.raise_for_status()
         return response.json()
     except Exception as e:
@@ -294,8 +296,9 @@ def fetch_weekend_metrics(game_id: str):
 def render_game_detail(game):
     st.title(f"{game['name']} - Star Schema Analytics")
     
-    # Fetch all data
-    overview = fetch_star_schema_overview(game['id'])
+    # Fetch all data, passing the configured cache TTL
+    cache_ttl = st.session_state.cache_ttl
+    overview = fetch_star_schema_overview(game['id'], cache_ttl)
     revenue_df = fetch_revenue_by_segment(game['id'])
     regional_df = fetch_regional_performance(game['id'])
     spenders_df = fetch_top_spenders(game['id'])
@@ -571,8 +574,8 @@ def render_dashboard():
         col_idx = idx % 4
         
         with cols[col_idx]:
-            # Fetch quick stats
-            overview = fetch_star_schema_overview(game['id'])
+            # Fetch quick stats using the configured cache TTL
+            overview = fetch_star_schema_overview(game['id'], st.session_state.cache_ttl)
             
             st.markdown(f"""
             <div class="game-card">
@@ -591,26 +594,85 @@ def render_dashboard():
                 st.session_state.view = 'detail'
                 st.rerun()
 
+def render_settings_page():
+    st.title("⚙️ Settings")
+    st.markdown('<p class="caption">Configure application behavior for development and testing.</p>', unsafe_allow_html=True)
+    
+    st.markdown('<div class="modern-card">', unsafe_allow_html=True)
+    
+    st.subheader("Cache Configuration")
+    
+    new_ttl = st.slider(
+        "Backend Cache TTL (seconds)",
+        min_value=1,
+        max_value=600,
+        value=st.session_state.cache_ttl,
+        help="Time-To-Live for data in the Redis cache. Lower values mean faster data refreshes from the database."
+    )
+    if new_ttl != st.session_state.cache_ttl:
+        st.session_state.cache_ttl = new_ttl
+        st.success(f"Cache TTL updated to {new_ttl} seconds.")
+
+    st.divider()
+    
+    st.subheader("UI Configuration")
+    new_refresh = st.slider(
+        "UI Auto-Refresh (seconds)",
+        min_value=5,
+        max_value=60,
+        value=st.session_state.auto_refresh_interval,
+        help="How often the UI should automatically refresh. Set to a higher value to reduce requests."
+    )
+    if new_refresh != st.session_state.auto_refresh_interval:
+        st.session_state.auto_refresh_interval = new_refresh
+        st.success(f"UI refresh interval updated to {new_refresh} seconds.")
+        st.info("The new refresh interval will apply after the next manual or automatic refresh.")
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
 # ============================================================================
 # MAIN APP LOGIC
 # ============================================================================
-
-# Auto-refresh every 10 seconds
-st_autorefresh(interval=10000, key="ui_refresh")
 
 # Initialize session state
 if 'view' not in st.session_state:
     st.session_state.view = 'dashboard'
 if 'selected_game' not in st.session_state:
     st.session_state.selected_game = None
+if 'cache_ttl' not in st.session_state:
+    st.session_state.cache_ttl = 300  # Default Cache TTL
+if 'auto_refresh_interval' not in st.session_state:
+    st.session_state.auto_refresh_interval = 10 # Default UI refresh
 
-# Route to appropriate view
-if st.session_state.view == 'dashboard':
-    render_dashboard()
-elif st.session_state.view == 'detail':
-    if st.button("← Back to Dashboard"):
-        st.session_state.view = 'dashboard'
-        st.rerun()
+# Auto-refresh using the value from session state
+st_autorefresh(interval=st.session_state.auto_refresh_interval * 1000, key="ui_refresh")
+
+# Sidebar Navigation
+with st.sidebar:
+    st.markdown("<h1>Game Analytics</h1>", unsafe_allow_html=True)
     
-    game = st.session_state.selected_game
-    render_game_detail(game)
+    page = st.radio(
+        "Navigation",
+        ("Dashboard", "Settings"),
+        key="navigation_page"
+    )
+    
+    st.divider()
+    st.info(f"Cache TTL: {st.session_state.cache_ttl}s")
+    st.info(f"UI Refresh: {st.session_state.auto_refresh_interval}s")
+
+
+# Page Routing
+if page == "Dashboard":
+    if st.session_state.view == 'dashboard':
+        render_dashboard()
+    elif st.session_state.view == 'detail':
+        if st.button("← Back to Dashboard"):
+            st.session_state.view = 'dashboard'
+            st.rerun()
+        
+        game = st.session_state.selected_game
+        render_game_detail(game)
+else:
+    render_settings_page()
