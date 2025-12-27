@@ -73,7 +73,7 @@ def ingest_kafka_to_mongo(**context):
     
     batch_size = 0
     errors = 0
-    logging.info("🔍 Starting Kafka → MongoDB ingestion...")
+    logging.info("Starting Kafka → MongoDB ingestion...")
     
     # FIXED: Better message processing with error handling
     try:
@@ -119,11 +119,11 @@ def ingest_kafka_to_mongo(**context):
                     
                     # Log progress every 100 messages
                     if batch_size % 100 == 0:
-                        logging.info(f"📊 Processed {batch_size} events so far...")
+                        logging.info(f"Processed {batch_size} events so far...")
                         
             except Exception as e:
                 errors += 1
-                logging.error(f"❌ Failed to insert event: {e}")
+                logging.error(f"Failed to insert event: {e}")
                 if errors > 10:
                     logging.error("Too many errors, stopping ingestion")
                     break
@@ -135,13 +135,13 @@ def ingest_kafka_to_mongo(**context):
     
     # NEW: Better logging
     if batch_size == 0:
-        logging.warning("⚠️ No events consumed from Kafka! Possible issues:")
+        logging.warning(" No events consumed from Kafka! Possible issues:")
         logging.warning("   1. Faker might not be generating data")
         logging.warning("   2. Kafka topic might be empty")
         logging.warning("   3. Consumer group offset might be at end of topic")
         logging.warning("   To reset consumer group: docker exec kafka kafka-consumer-groups --bootstrap-server kafka:29092 --group airflow_ingestion_star_schema --reset-offsets --to-earliest --execute --topic GameAnalytics")
     else:
-        logging.info(f"✅ Ingested {batch_size} events into MongoDB")
+        logging.info(f"Ingested {batch_size} events into MongoDB")
     
     context['ti'].xcom_push(key='ingested_count', value=batch_size)
     context['ti'].xcom_push(key='error_count', value=errors)
@@ -184,10 +184,10 @@ def populate_dimensions(**context):
             all_events.extend(events)
         
         if not all_events:
-            logging.info("ℹ️ No new events to process (this is normal if no data generated recently)")
+            logging.info(" No new events to process (this is normal if no data generated recently)")
             return
         
-        logging.info(f"📊 Processing {len(all_events)} events for dimension population")
+        logging.info(f"Processing {len(all_events)} events for dimension population")
         
         # --- 1. POPULATE dim_player ---
         player_records = {}
@@ -222,7 +222,7 @@ def populate_dimensions(**context):
                 data['registration_date'], data['last_login'], data['is_active']
             ))
         
-        logging.info(f"✅ Upserted {len(player_records)} players into dim_player")
+        logging.info(f"Upserted {len(player_records)} players into dim_player")
         
         # --- 2. POPULATE dim_game ---
         game_records = {}
@@ -243,7 +243,7 @@ def populate_dimensions(**context):
                 ON CONFLICT (game_id) DO NOTHING;
             """, (data['game_id'], data['game_name'], data['genre'], data['developer']))
         
-        logging.info(f"✅ Upserted {len(game_records)} games into dim_game")
+        logging.info(f"Upserted {len(game_records)} games into dim_game")
         
         # --- 3. POPULATE dim_time ---
         time_records = {}
@@ -274,7 +274,7 @@ def populate_dimensions(**context):
                 data['month'], data['year'], data['day_of_week'], data['is_weekend']
             ))
         
-        logging.info(f"✅ Upserted {len(time_records)} time entries into dim_time")
+        logging.info(f"Upserted {len(time_records)} time entries into dim_time")
         
         # --- 4. POPULATE dim_geography ---
         geo_records = {}
@@ -294,7 +294,7 @@ def populate_dimensions(**context):
                 ON CONFLICT (country_code) DO UPDATE SET region = EXCLUDED.region;
             """, (data['country_code'], data['region']))
         
-        logging.info(f"✅ Upserted {len(geo_records)} geography entries into dim_geography")
+        logging.info(f"Upserted {len(geo_records)} geography entries into dim_geography")
         
         # --- 5. POPULATE dim_item ---
         item_records = {}
@@ -315,14 +315,14 @@ def populate_dimensions(**context):
                 ON CONFLICT (item_id) DO NOTHING;
             """, (data['item_id'], data['item_name'], data['category'], data['base_price']))
         
-        logging.info(f"✅ Upserted {len(item_records)} items into dim_item")
+        logging.info(f"Upserted {len(item_records)} items into dim_item")
         
         pg_conn.commit()
-        logging.info("✅ All dimensions populated successfully")
+        logging.info("All dimensions populated successfully")
         
     except Exception as e:
         pg_conn.rollback()
-        logging.error(f"❌ Dimension population failed: {e}")
+        logging.error(f" Dimension population failed: {e}")
         raise
     finally:
         cur.close()
@@ -388,7 +388,7 @@ def populate_facts(**context):
                 VALUES %s
                 ON CONFLICT (session_id) DO UPDATE SET duration_seconds = EXCLUDED.duration_seconds;
             """, session_rows)
-            logging.info(f"✅ Upserted {len(session_rows)} sessions into fact_session")
+            logging.info(f"Upserted {len(session_rows)} sessions into fact_session")
         
         # --- 2. POPULATE fact_transaction ---
         transactions = list(mongo_db['transactions'].find({'timestamp': {'$gte': lookback}}))
@@ -413,7 +413,7 @@ def populate_facts(**context):
                 VALUES %s
                 ON CONFLICT (transaction_id) DO NOTHING;
             """, transaction_rows)
-            logging.info(f"✅ Inserted {len(transaction_rows)} transactions into fact_transaction")
+            logging.info(f"Inserted {len(transaction_rows)} transactions into fact_transaction")
         
         # --- 3. POPULATE fact_telemetry ---
         telemetry = list(mongo_db['telemetry'].find({'timestamp': {'$gte': lookback}}))
@@ -437,10 +437,10 @@ def populate_facts(**context):
                 INSERT INTO fact_telemetry (session_id, game_id, time_id, fps, latency_ms, platform, region)
                 VALUES %s;
             """, telemetry_rows)
-            logging.info(f"✅ Inserted {len(telemetry_rows)} telemetry records into fact_telemetry")
+            logging.info(f"Inserted {len(telemetry_rows)} telemetry records into fact_telemetry")
         
         pg_conn.commit()
-        logging.info("✅ All fact tables populated successfully")
+        logging.info("All fact tables populated successfully")
         
         # Push stats to XCom
         context['ti'].xcom_push(key='sessions_loaded', value=len(session_rows))
@@ -449,7 +449,7 @@ def populate_facts(**context):
         
     except Exception as e:
         pg_conn.rollback()
-        logging.error(f"❌ Fact population failed: {e}")
+        logging.error(f" Fact population failed: {e}")
         import traceback
         traceback.print_exc()
         raise
@@ -482,7 +482,7 @@ def check_mongodb_size(**context):
     context['ti'].xcom_push(key='mongodb_size_mb', value=size_mb)
     
     if size_mb > 0:
-        logging.warning(f"⚠️ MongoDB size ({size_mb:.2f} MB) exceeds 300 MB threshold")
+        logging.warning(f" MongoDB size ({size_mb:.2f} MB) exceeds 300 MB threshold")
         context['ti'].xcom_push(key='archive_required', value=True)
         return 'archive_to_hadoop'
     
@@ -517,7 +517,7 @@ def archive_to_hadoop(**context):
     )
     
     if not archive_required:
-        logging.info("ℹ️ Skipping archival - not required")
+        logging.info(" Skipping archival - not required")
         return
     
     mongo_client = MongoClient('mongodb://admin:admin@mongo:27017/')
@@ -537,7 +537,7 @@ def archive_to_hadoop(**context):
         old_docs = list(collection.find({'timestamp': {'$lt': cutoff_time}}))
         
         if not old_docs:
-            logging.info(f"ℹ️ No old documents in {collection_name}")
+            logging.info(f" No old documents in {collection_name}")
             continue
         
         logging.info(f"📦 Archiving {len(old_docs)} documents from {collection_name}")
@@ -600,11 +600,11 @@ def archive_to_hadoop(**context):
             os.unlink(tmp_path)
             
         except Exception as e:
-            logging.error(f"❌ Error archiving {collection_name}: {e}")
+            logging.error(f" Error archiving {collection_name}: {e}")
             continue
     
     mongo_client.close()
-    logging.info(f"✅ Archived {total_archived} documents to HDFS")
+    logging.info(f"Archived {total_archived} documents to HDFS")
 
 archive_task = PythonOperator(
     task_id='archive_to_hadoop',
@@ -649,9 +649,9 @@ def data_quality_checks(**context):
         issues = [k for k, v in checks.items() if 'orphaned' in k and v > 0]
         
         if issues:
-            logging.warning(f"⚠️ Data quality issues: {checks}")
+            logging.warning(f" Data quality issues: {checks}")
         else:
-            logging.info(f"✅ Data quality checks passed: {checks}")
+            logging.info(f"Data quality checks passed: {checks}")
         
         context['ti'].xcom_push(key='quality_checks', value=checks)
         

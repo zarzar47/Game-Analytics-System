@@ -37,7 +37,7 @@ EVENT_SCHEMA = StructType([
 ])
 
 def get_spark_session():
-    print("🔧 Creating Spark Session...")
+    print(" Creating Spark Session...")
     spark = (
         SparkSession.builder
         .appName("GameAnalyticsStreamProcessor")
@@ -55,7 +55,7 @@ def get_spark_session():
 
 def debug_raw_kafka(df, epoch_id):
     """Debug: Show raw Kafka messages"""
-    print(f"\n🔍 DEBUG BATCH {epoch_id}: RAW KAFKA MESSAGES")
+    print(f"\n DEBUG BATCH {epoch_id}: RAW KAFKA MESSAGES")
     print("=" * 80)
     count = df.count()
     print(f"Total messages in batch: {count}")
@@ -67,7 +67,7 @@ def debug_raw_kafka(df, epoch_id):
 
 def debug_parsed_events(df, epoch_id):
     """Debug: Show parsed events with timestamps"""
-    print(f"\n🔍 DEBUG BATCH {epoch_id}: PARSED EVENTS")
+    print(f"\n DEBUG BATCH {epoch_id}: PARSED EVENTS")
     print("=" * 80)
     count = df.count()
     print(f"Total parsed events: {count}")
@@ -115,7 +115,7 @@ def write_to_postgres(df, epoch_id, table_name):
                 .mode("append")
                 .save()
             )
-            print(f"✅ Successfully wrote to {table_name}\n")
+            print(f" Successfully wrote to {table_name}\n")
         else:
             print(f"[{timestamp}] No rows for {table_name} (watermark delay)\n")
             

@@ -144,12 +144,12 @@ async def get_game_overview(
         if not skip_cache:
             cached_result = await redis_pool.get(cache_key)
             if cached_result:
-                logger.info(f"✅ Cache HIT for game {game_id}")
+                logger.info(f" Cache HIT for game {game_id}")
                 return json.loads(cached_result)
             else:
-                logger.info(f"❌ Cache MISS for game {game_id}")
+                logger.info(f" Cache MISS for game {game_id}")
         else:
-            logger.info(f"⚠️ Cache SKIPPED for game {game_id}")
+            logger.info(f" Cache SKIPPED for game {game_id}")
 
         # 2. Query database
         logger.info(f"🔍 Querying database for game {game_id}")
@@ -196,7 +196,7 @@ async def get_game_overview(
         row = db_result.fetchone()
         
         if not row or row[1] == 0:  # No players
-            logger.warning(f"⚠️ No data found for game {game_id}")
+            logger.warning(f" No data found for game {game_id}")
             # Return empty state instead of 404
             result_model = StarSchemaMetrics(
                 game_name="Unknown",
@@ -217,12 +217,12 @@ async def get_game_overview(
                 avg_fps=float(row[5]) if row[5] else None,
                 avg_latency=float(row[6]) if row[6] else None
             )
-            logger.info(f"✅ Found data for game {game_id}: {row[1]} players, ${row[2]:.2f} revenue")
+            logger.info(f" Found data for game {game_id}: {row[1]} players, ${row[2]:.2f} revenue")
         
         # 3. Store result in cache
         if not skip_cache:
             await redis_pool.set(cache_key, result_model.model_dump_json(), ex=cache_ttl)
-            logger.info(f"💾 Cached data for game {game_id} (TTL: {cache_ttl}s)")
+            logger.info(f" Cached data for game {game_id} (TTL: {cache_ttl}s)")
         
         return result_model
 
